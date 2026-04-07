@@ -1,9 +1,9 @@
 //! Block-order copy engine with large file buffers and tar streaming.
 //!
 //! Large files are copied with platform-optimal syscalls (`clonefile` on macOS
-//! APFS, buffered copy elsewhere). Small files are batched into tar streams
-//! for reduced syscall overhead. Duplicates are hard-linked after their
-//! canonical file is copied.
+//! APFS, `copy_file_range` on Linux, buffered copy elsewhere). Small files are
+//! batched into tar streams for reduced syscall overhead. Duplicates are
+//! hard-linked after their canonical file is copied.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -317,6 +317,12 @@ fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), C
             src.display(),
             dest.display()
         );
+        return Ok(());
+    }
+
+    // On Linux, try copy_file_range (kernel-to-kernel zero-copy).
+    #[cfg(target_os = "linux")]
+    if let Ok(true) = super::linux_io::try_copy_file_range(src, dest) {
         return Ok(());
     }
 
