@@ -15,6 +15,12 @@ publish = true
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+glob = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
