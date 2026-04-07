@@ -76,3 +76,12 @@ ulid = { version = "1", features = ["serde"] }
 
 # Temp files (for tests)
 tempfile = "3"
+
+# Windows FFI bindings
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_SystemInformation",
+    "Win32_System_Ioctl",
+] }

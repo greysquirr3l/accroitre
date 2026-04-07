@@ -9,3 +9,5 @@ pub mod linux_io;
 pub mod macos_io;
 pub mod scan;
 pub mod verify;
+#[cfg(target_os = "windows")]
+pub mod windows_io;

@@ -301,8 +301,15 @@ fn get_available_space(path: &Path) -> Result<u64, io::Error> {
 
 #[cfg(not(unix))]
 fn get_available_space(_path: &Path) -> Result<u64, io::Error> {
-    // On non-Unix, skip space check.
-    Ok(u64::MAX)
+    // On Windows, use the windows_io module; on other non-Unix, skip.
+    #[cfg(target_os = "windows")]
+    {
+        return super::windows_io::get_available_space_windows(_path);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(u64::MAX)
+    }
 }
 
 /// Copy a large file using platform-optimal methods.
@@ -316,6 +323,12 @@ fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), C
     // On Linux, try copy_file_range (kernel-to-kernel zero-copy).
     #[cfg(target_os = "linux")]
     if let Ok(true) = super::linux_io::try_copy_file_range(src, dest) {
+        return Ok(());
+    }
+
+    // On Windows, try ReFS block clone → CopyFileExW → buffered copy.
+    #[cfg(target_os = "windows")]
+    if let Ok(true) = super::windows_io::try_windows_optimal_copy(src, dest) {
         return Ok(());
     }
 

@@ -281,9 +281,26 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
 }
 
 /// Stub for platforms without physical offset resolution.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 async fn get_physical_offset(_path: &Path) -> Result<Option<u64>, ScanError> {
     Ok(None)
+}
+
+/// Get the physical disk offset for a file on Windows (NTFS).
+#[cfg(target_os = "windows")]
+async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        super::windows_io::get_ntfs_physical_offset(&path).map_err(|e| ScanError::PhysicalOffset {
+            path,
+            source: e,
+        })
+    })
+    .await
+    .map_err(|e| ScanError::PhysicalOffset {
+        path: PathBuf::from("<join-error>"),
+        source: std::io::Error::other(e),
+    })?
 }
 
 #[cfg(test)]
