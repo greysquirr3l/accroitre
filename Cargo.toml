@@ -85,3 +85,12 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Ioctl",
 ] }
+
+# HTTP client (for self-update)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Cryptographic hashing (SHA-256 for update verification)
+sha2 = "0.10"
+
+# Semantic version comparison
+semver = "1"

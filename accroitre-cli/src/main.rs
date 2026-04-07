@@ -2,6 +2,7 @@
 
 pub mod pipeline;
 pub mod tui;
+pub mod update;
 
 use std::path::PathBuf;
 
@@ -26,6 +27,9 @@ enum Commands {
 
     /// Hash files and output JSON for remote dedup.
     Hash(HashArgs),
+
+    /// Check for or install updates from GitHub releases.
+    Update(UpdateArgs),
 
     /// Show version information including git SHA.
     Version,
@@ -141,6 +145,18 @@ pub struct HashArgs {
     pub threads: Option<usize>,
 }
 
+/// Arguments for the update subcommand.
+#[derive(Parser, Debug)]
+pub struct UpdateArgs {
+    /// Only check for updates; do not install.
+    #[arg(long)]
+    pub check: bool,
+
+    /// Install a specific version (e.g. `1.2.0`).  Defaults to latest.
+    #[arg(value_name = "VERSION")]
+    pub version: Option<String>,
+}
+
 // ── SSH path parsing ──────────────────────────────────────────────────────────
 
 /// A parsed path that is either local or refers to a remote SSH host.
@@ -209,6 +225,10 @@ fn main() {
         Some(Commands::Hash(_args)) => {
             // TODO(T17): wire up hash subcommand
             eprintln!("Hash command not yet implemented.");
+        }
+        Some(Commands::Update(args)) => {
+            let exit_code = run_update(&args);
+            std::process::exit(exit_code);
         }
         Some(Commands::Version) => {
             let version = env!("CARGO_PKG_VERSION");
@@ -296,6 +316,29 @@ fn ctrlc_handler(cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>) {
             eprintln!("\nInterrupted — finishing current operation…");
         }
     });
+}
+
+fn run_update(args: &UpdateArgs) -> i32 {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build();
+
+    let rt = match rt {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Failed to start runtime: {e}");
+            return pipeline::EXIT_FAILURE;
+        }
+    };
+
+    let result = rt.block_on(update::run(args));
+    match result {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("Update failed: {e:#}");
+            pipeline::EXIT_FAILURE
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
