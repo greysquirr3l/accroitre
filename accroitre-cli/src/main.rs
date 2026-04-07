@@ -1,5 +1,7 @@
 //! `accro` — CLI for accroître, a high-speed file copier.
 
+pub mod tui;
+
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
