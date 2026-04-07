@@ -85,12 +85,9 @@ pub fn verify_plan(
     let verified_count = AtomicU64::new(0);
 
     // Build a thread pool if a custom thread count is specified.
-    let pool = config.thread_count.and_then(|n| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .build()
-            .ok()
-    });
+    let pool = config
+        .thread_count
+        .and_then(|n| rayon::ThreadPoolBuilder::new().num_threads(n).build().ok());
 
     let do_verify = || {
         verify_list
@@ -121,22 +118,21 @@ pub fn verify_plan(
                 }
 
                 // Recompute hash.
-                let actual_hash =
-                    match hash_file(dest_path, config.algorithm, config.buffer_size) {
-                        Ok(h) => h,
-                        Err(e) => {
-                            warn!("could not hash {}: {e}", dest_path.display());
-                            let done = verified_count.fetch_add(1, Ordering::Relaxed) + 1;
-                            progress.update(&ProgressUpdate::VerifyProgress {
-                                files_verified: done,
-                                files_total,
-                            });
-                            return Some(VerifyError::Io {
-                                path: dest_path.clone(),
-                                source: std::io::Error::other(e.to_string()),
-                            });
-                        }
-                    };
+                let actual_hash = match hash_file(dest_path, config.algorithm, config.buffer_size) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        warn!("could not hash {}: {e}", dest_path.display());
+                        let done = verified_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        progress.update(&ProgressUpdate::VerifyProgress {
+                            files_verified: done,
+                            files_total,
+                        });
+                        return Some(VerifyError::Io {
+                            path: dest_path.clone(),
+                            source: std::io::Error::other(e.to_string()),
+                        });
+                    }
+                };
 
                 let done = verified_count.fetch_add(1, Ordering::Relaxed) + 1;
                 progress.update(&ProgressUpdate::VerifyProgress {
@@ -269,9 +265,10 @@ mod tests {
 
         assert_eq!(result.files_failed, 1);
         assert!(!result.failures.is_empty());
-        assert!(
-            matches!(&result.failures[0], VerifyError::SizeMismatch { .. } | VerifyError::HashMismatch { .. })
-        );
+        assert!(matches!(
+            &result.failures[0],
+            VerifyError::SizeMismatch { .. } | VerifyError::HashMismatch { .. }
+        ));
     }
 
     #[test]

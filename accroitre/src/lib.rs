@@ -3,6 +3,7 @@
 //! This crate provides the library core: domain types, port traits, engine logic,
 //! and adapter implementations. The binary CLI is in the `accroitre-cli` crate.
 
+pub mod adapters;
 pub mod domain;
 pub mod engine;
 pub mod ports;
