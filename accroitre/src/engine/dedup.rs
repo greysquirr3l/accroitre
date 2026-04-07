@@ -196,13 +196,8 @@ mod tests {
         ];
 
         let config = HashConfig::default();
-        let (plan, stats) = build_dedup_plan(
-            entries,
-            root,
-            Path::new("/dest"),
-            &config,
-            &NullProgress,
-        );
+        let (plan, stats) =
+            build_dedup_plan(entries, root, Path::new("/dest"), &config, &NullProgress);
 
         assert_eq!(plan.entries.len(), 2);
         assert_eq!(plan.dedup_groups.len(), 1);
@@ -226,13 +221,8 @@ mod tests {
         ];
 
         let config = HashConfig::default();
-        let (plan, stats) = build_dedup_plan(
-            entries,
-            root,
-            Path::new("/dest"),
-            &config,
-            &NullProgress,
-        );
+        let (plan, stats) =
+            build_dedup_plan(entries, root, Path::new("/dest"), &config, &NullProgress);
 
         assert_eq!(plan.entries.len(), 2);
         // No dedup groups since content differs.
@@ -252,13 +242,8 @@ mod tests {
         let entries = vec![make_entry(root.join("only.txt"), 11)];
 
         let config = HashConfig::default();
-        let (plan, stats) = build_dedup_plan(
-            entries,
-            root,
-            Path::new("/dest"),
-            &config,
-            &NullProgress,
-        );
+        let (plan, stats) =
+            build_dedup_plan(entries, root, Path::new("/dest"), &config, &NullProgress);
 
         assert_eq!(plan.entries.len(), 1);
         assert_eq!(plan.dedup_groups.len(), 0);
@@ -297,13 +282,8 @@ mod tests {
         ];
 
         let config = HashConfig::default();
-        let (plan, stats) = build_dedup_plan(
-            entries,
-            root,
-            Path::new("/dest"),
-            &config,
-            &NullProgress,
-        );
+        let (plan, stats) =
+            build_dedup_plan(entries, root, Path::new("/dest"), &config, &NullProgress);
 
         assert_eq!(plan.entries.len(), 6);
         assert_eq!(stats.total_files, 6);
@@ -325,13 +305,8 @@ mod tests {
         ];
 
         let config = HashConfig::default();
-        let (plan, stats) = build_dedup_plan(
-            entries,
-            root,
-            Path::new("/dest"),
-            &config,
-            &NullProgress,
-        );
+        let (plan, stats) =
+            build_dedup_plan(entries, root, Path::new("/dest"), &config, &NullProgress);
 
         assert_eq!(plan.entries.len(), 2);
         assert_eq!(stats.duplicate_files, 0);
@@ -373,12 +348,8 @@ mod tests {
             make_entry(root.join("b.txt"), 4),
         ];
 
-        let (plan, stats) = dedup_with_hashing(
-            entries,
-            root,
-            Path::new("/dest"),
-            HashAlgorithm::Blake3,
-        );
+        let (plan, stats) =
+            dedup_with_hashing(entries, root, Path::new("/dest"), HashAlgorithm::Blake3);
 
         assert_eq!(plan.entries.len(), 2);
         assert_eq!(stats.duplicate_files, 1);

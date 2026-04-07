@@ -21,9 +21,11 @@ glob = { workspace = true }
 xxhash-rust = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }
+tar = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+nix = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

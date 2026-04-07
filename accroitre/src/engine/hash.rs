@@ -107,12 +107,9 @@ pub fn hash_entries(
     let files_hashed = AtomicU64::new(0);
 
     // Build a custom thread pool if requested.
-    let pool = config.thread_count.map(|n| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .build()
-            .ok()
-    });
+    let pool = config
+        .thread_count
+        .map(|n| rayon::ThreadPoolBuilder::new().num_threads(n).build().ok());
 
     let results: Vec<(usize, Result<Hash, HashError>)> = if let Some(Some(ref pool)) = pool {
         pool.install(|| {
@@ -198,11 +195,7 @@ fn hash_entries_parallel(
         .collect()
 }
 
-fn hash_file_xxhash(
-    file: &mut File,
-    path: &Path,
-    buffer_size: usize,
-) -> Result<Hash, HashError> {
+fn hash_file_xxhash(file: &mut File, path: &Path, buffer_size: usize) -> Result<Hash, HashError> {
     let mut hasher = xxhash_rust::xxh3::Xxh3Default::new();
     let mut buf = vec![0u8; buffer_size];
 
@@ -223,11 +216,7 @@ fn hash_file_xxhash(
     Ok(Hash::XxHash128(digest.to_be_bytes()))
 }
 
-fn hash_file_blake3(
-    file: &mut File,
-    path: &Path,
-    buffer_size: usize,
-) -> Result<Hash, HashError> {
+fn hash_file_blake3(file: &mut File, path: &Path, buffer_size: usize) -> Result<Hash, HashError> {
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0u8; buffer_size];
 
@@ -353,8 +342,7 @@ mod tests {
 
         // Create test files.
         for i in 0..10 {
-            fs::write(root.join(format!("file_{i}.txt")), format!("content {i}"))
-                .expect("write");
+            fs::write(root.join(format!("file_{i}.txt")), format!("content {i}")).expect("write");
         }
 
         let mut entries: Vec<FileEntry> = (0..10)
@@ -387,14 +375,8 @@ mod tests {
         fs::write(root.join("b.txt"), content).expect("write");
 
         let mut entries = vec![
-            FileEntry::new(
-                root.join("a.txt"),
-                content.len() as u64,
-            ),
-            FileEntry::new(
-                root.join("b.txt"),
-                content.len() as u64,
-            ),
+            FileEntry::new(root.join("a.txt"), content.len() as u64),
+            FileEntry::new(root.join("b.txt"), content.len() as u64),
         ];
 
         let config = HashConfig::default();

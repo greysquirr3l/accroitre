@@ -185,7 +185,10 @@ async fn resolve_physical_offsets(entries: &mut [FileEntry], errors: &mut Vec<Sc
         match get_physical_offset(&entry.path).await {
             Ok(offset) => entry.physical_offset = offset,
             Err(e) => {
-                debug!("could not get physical offset for {}: {e}", entry.path.display());
+                debug!(
+                    "could not get physical offset for {}: {e}",
+                    entry.path.display()
+                );
                 errors.push(e);
             }
         }
@@ -246,7 +249,8 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
         // Use FIEMAP ioctl to get the physical extent offset of the first extent.
         // SAFETY: We allocate a properly sized buffer for the fiemap struct + 1 extent,
         // zero-initialize it, and pass valid fd/pointer to ioctl.
-        let mut buf = [0u8; std::mem::size_of::<libc::fiemap>() + std::mem::size_of::<libc::fiemap_extent>()];
+        let mut buf =
+            [0u8; std::mem::size_of::<libc::fiemap>() + std::mem::size_of::<libc::fiemap_extent>()];
         let fiemap = buf.as_mut_ptr().cast::<libc::fiemap>();
         unsafe {
             (*fiemap).fm_start = 0;
@@ -362,7 +366,12 @@ mod tests {
                 .expect("scan should succeed");
 
             assert_eq!(result.entries.len(), 1);
-            assert!(result.entries.first().is_some_and(|e| e.path.ends_with("keep.txt")));
+            assert!(
+                result
+                    .entries
+                    .first()
+                    .is_some_and(|e| e.path.ends_with("keep.txt"))
+            );
         });
     }
 
@@ -430,7 +439,9 @@ mod tests {
 
             // Entries should be sorted by physical_offset (or u64::MAX if None).
             for window in result.entries.windows(2) {
-                let a = window.first().map(|e| e.physical_offset.unwrap_or(u64::MAX));
+                let a = window
+                    .first()
+                    .map(|e| e.physical_offset.unwrap_or(u64::MAX));
                 let b = window.get(1).map(|e| e.physical_offset.unwrap_or(u64::MAX));
                 if let (Some(a_off), Some(b_off)) = (a, b) {
                     assert!(a_off <= b_off);
@@ -443,7 +454,11 @@ mod tests {
     fn is_excluded_matches_filename() {
         let pattern = Pattern::new("*.log").expect("pattern");
         let root = Path::new("/root");
-        assert!(is_excluded(Path::new("/root/test.log"), root, &[pattern.clone()]));
+        assert!(is_excluded(
+            Path::new("/root/test.log"),
+            root,
+            &[pattern.clone()]
+        ));
         assert!(!is_excluded(Path::new("/root/test.txt"), root, &[pattern]));
     }
 
