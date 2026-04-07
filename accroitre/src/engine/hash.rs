@@ -238,6 +238,7 @@ fn hash_file_blake3(file: &mut File, path: &Path, buffer_size: usize) -> Result<
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
 

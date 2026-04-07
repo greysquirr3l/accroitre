@@ -167,6 +167,7 @@ pub fn dedup_with_hashing(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};

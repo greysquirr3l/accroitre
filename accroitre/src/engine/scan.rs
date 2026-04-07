@@ -310,6 +310,7 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
 
@@ -480,9 +481,9 @@ mod tests {
         assert!(is_excluded(
             Path::new("/root/test.log"),
             root,
-            &[pattern.clone()]
+            std::slice::from_ref(&pattern)
         ));
-        assert!(!is_excluded(Path::new("/root/test.txt"), root, &[pattern]));
+        assert!(!is_excluded(Path::new("/root/test.txt"), root, std::slice::from_ref(&pattern)));
     }
 
     #[test]
@@ -492,12 +493,12 @@ mod tests {
         assert!(is_excluded(
             Path::new("/root/subdir/test.log"),
             root,
-            &[pattern.clone()]
+            std::slice::from_ref(&pattern)
         ));
         assert!(!is_excluded(
             Path::new("/root/other/test.log"),
             root,
-            &[pattern]
+            std::slice::from_ref(&pattern)
         ));
     }
 

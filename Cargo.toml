@@ -15,6 +15,9 @@ readme = "README.md"
 keywords = ["file-copy", "deduplication", "ssh", "backup", "cli"]
 categories = ["command-line-utilities", "filesystem"]
 
+[workspace.lints.clippy]
+multiple_crate_versions = "allow"
+
 [workspace.dependencies]
 # Core error handling
 thiserror = "2"

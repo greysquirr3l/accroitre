@@ -152,7 +152,7 @@ pub fn try_macos_optimal_copy(
 ) -> Result<bool, CopyError> {
     // Try clonefile if requested (fast path for APFS).
     if try_clone
-        && let Ok(()) = try_clonefile(src, dest)
+        && matches!(try_clonefile(src, dest), Ok(()))
     {
         debug!(
             "clonefile succeeded: {} -> {}",
@@ -195,6 +195,7 @@ fn try_clonefile(src: &Path, dest: &Path) -> Result<(), CopyError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
 
@@ -263,15 +264,11 @@ mod tests {
 
         fs::write(&src, b"clone me").expect("write src");
 
-        match try_clonefile(&src, &dst) {
-            Ok(()) => {
-                let copied = fs::read(&dst).expect("read dst");
-                assert_eq!(b"clone me".as_slice(), copied.as_slice());
-            }
-            Err(_) => {
-                // clonefile not supported on this filesystem — acceptable.
-            }
+        if matches!(try_clonefile(&src, &dst), Ok(())) {
+            let copied = fs::read(&dst).expect("read dst");
+            assert_eq!(b"clone me".as_slice(), copied.as_slice());
         }
+        // else: clonefile not supported on this filesystem — acceptable.
     }
 
     #[test]

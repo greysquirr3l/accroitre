@@ -130,10 +130,7 @@ pub async fn fetch_releases() -> Result<Vec<Release>> {
         .context("Failed to reach GitHub API")?;
 
     if !response.status().is_success() {
-        bail!(
-            "GitHub API returned status {}",
-            response.status().as_u16()
-        );
+        bail!("GitHub API returned status {}", response.status().as_u16());
     }
 
     let body: Vec<serde_json::Value> = response
@@ -169,8 +166,7 @@ fn parse_release(value: &serde_json::Value) -> Option<Release> {
             arr.iter()
                 .filter_map(|a| {
                     let name = a.get("name")?.as_str()?.to_owned();
-                    let download_url =
-                        a.get("browser_download_url")?.as_str()?.to_owned();
+                    let download_url = a.get("browser_download_url")?.as_str()?.to_owned();
                     Some(Asset { name, download_url })
                 })
                 .collect()
@@ -219,10 +215,7 @@ async fn install(release: &Release) -> Result<()> {
             )
         })?;
 
-    let checksum_asset = release
-        .assets
-        .iter()
-        .find(|a| a.name == checksum_name);
+    let checksum_asset = release.assets.iter().find(|a| a.name == checksum_name);
 
     println!("Downloading accro v{}…", release.version);
 
@@ -232,8 +225,8 @@ async fn install(release: &Release) -> Result<()> {
     // Verify integrity if checksum is available.
     if let Some(cs_asset) = checksum_asset {
         let cs_bytes = download_asset(&client, cs_asset).await?;
-        let expected_hex = String::from_utf8(cs_bytes)
-            .context("Checksum file is not valid UTF-8")?;
+        let expected_hex =
+            String::from_utf8(cs_bytes).context("Checksum file is not valid UTF-8")?;
         verify_sha256(&binary_bytes, expected_hex.trim())?;
         println!("SHA-256 verified.");
     } else {
@@ -288,9 +281,7 @@ pub fn verify_sha256(data: &[u8], expected_hex: &str) -> Result<()> {
         .unwrap_or(expected_hex);
 
     if !constant_time_eq(actual.as_bytes(), expected.as_bytes()) {
-        bail!(
-            "SHA-256 mismatch: expected {expected}, got {actual}"
-        );
+        bail!("SHA-256 mismatch: expected {expected}, got {actual}");
     }
     Ok(())
 }
@@ -341,12 +332,11 @@ fn replace_binary(exe_path: &Path, new_bytes: &[u8]) -> Result<()> {
 
     // Write new binary to staging file.
     {
-        let mut f = fs::File::create(&staging_path)
-            .context("Failed to create staging file for update")?;
+        let mut f =
+            fs::File::create(&staging_path).context("Failed to create staging file for update")?;
         f.write_all(new_bytes)
             .context("Failed to write update to staging file")?;
-        f.sync_all()
-            .context("Failed to sync staging file")?;
+        f.sync_all().context("Failed to sync staging file")?;
     }
 
     // Set executable permissions on Unix.
@@ -416,6 +406,7 @@ fn http_client() -> Result<reqwest::Client> {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

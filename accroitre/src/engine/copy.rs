@@ -407,7 +407,7 @@ fn get_available_space(_path: &Path) -> Result<u64, io::Error> {
 fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), CopyError> {
     // On macOS, try clonefile → fcopyfile → buffered copy.
     #[cfg(target_os = "macos")]
-    if let Ok(true) = super::macos_io::try_macos_optimal_copy(src, dest, config.try_clonefile) {
+    if matches!(super::macos_io::try_macos_optimal_copy(src, dest, config.try_clonefile), Ok(true)) {
         return Ok(());
     }
 
@@ -553,6 +553,7 @@ fn preserve_permissions(_src: &Path, _dest: &Path, _permissions: u32) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
 

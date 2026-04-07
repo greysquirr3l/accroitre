@@ -504,6 +504,14 @@ fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 mod tests {
     use super::*;
     use tempfile::TempDir;

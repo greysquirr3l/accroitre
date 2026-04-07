@@ -85,14 +85,15 @@ impl TuiProgress {
     }
 
     /// Whether in quiet mode (no TUI output, only final summary).
-    pub fn is_quiet(&self) -> bool {
+    pub const fn is_quiet(&self) -> bool {
         self.quiet
     }
     ///
     /// The caller must hold no other lock on `self.state`.
     pub fn summary(&self) -> RunSummary {
-        if let Ok(state) = self.state.lock() {
-            RunSummary {
+        self.state.lock().map_or_else(
+            |_| RunSummary::default(),
+            |state| RunSummary {
                 files_total: state.summary.files_total,
                 files_copied: state.summary.files_copied,
                 files_linked: state.summary.files_linked,
@@ -101,14 +102,13 @@ impl TuiProgress {
                 bytes_total: state.summary.bytes_total,
                 bytes_copied: state.summary.bytes_copied,
                 dedup_bytes_saved: state.summary.dedup_bytes_saved,
-            }
-        } else {
-            RunSummary::default()
-        }
+            },
+        )
     }
 
     // ── Phase transitions ─────────────────────────────────────────────────
 
+    #[allow(clippy::literal_string_with_formatting_args)]
     fn enter_scanning(&self, state: &mut TuiState) {
         let spinner = self.mp.add(ProgressBar::new_spinner());
         spinner.set_style(
@@ -122,6 +122,7 @@ impl TuiProgress {
         state.phase = Phase::Scanning;
     }
 
+    #[allow(clippy::literal_string_with_formatting_args)]
     fn enter_hash_or_copy_or_verify(
         &self,
         state: &mut TuiState,
@@ -152,6 +153,7 @@ impl TuiProgress {
         state.phase = phase;
     }
 
+    #[allow(clippy::literal_string_with_formatting_args)]
     fn enter_verify(
         &self,
         state: &mut TuiState,
@@ -333,6 +335,13 @@ impl ProgressPort for TuiProgress {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::significant_drop_tightening
+)]
 mod tests {
     use super::*;
     use std::path::Path;

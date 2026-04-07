@@ -371,7 +371,7 @@ fn load_or_create_manifest(
     }
 }
 
-fn cancelled_result() -> PipelineResult {
+const fn cancelled_result() -> PipelineResult {
     PipelineResult {
         copy_result: CopyResult {
             files_copied: 0,
@@ -411,6 +411,7 @@ fn log_copy_results(log: &JsonLog, result: &CopyResult, plan: &accroitre::domain
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use std::fs;

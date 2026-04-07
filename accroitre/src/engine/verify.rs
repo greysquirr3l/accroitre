@@ -153,10 +153,7 @@ pub fn verify_plan(
             .collect::<Vec<_>>()
     };
 
-    let failures: Vec<VerifyError> = match pool {
-        Some(ref p) => p.install(do_verify),
-        None => do_verify(),
-    };
+    let failures: Vec<VerifyError> = pool.as_ref().map_or_else(do_verify, |p| p.install(do_verify));
 
     let files_failed = failures.len() as u64;
     let files_verified = verified_count.load(Ordering::Relaxed) - files_failed;
@@ -183,6 +180,7 @@ fn build_duplicate_set(groups: &[DedupGroup]) -> HashSet<usize> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use crate::domain::{CopyPlan, DedupGroup, FileEntry, HashAlgorithm};

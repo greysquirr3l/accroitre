@@ -119,6 +119,8 @@ impl SqliteCache {
             .optional()
             .map_err(|e| CacheError::Query { source: e })?;
 
+        drop(conn);
+
         let Some((hash_bytes, algo, cached_size, cached_mtime)) = result else {
             return Ok(None);
         };
@@ -176,6 +178,8 @@ impl SqliteCache {
         )
         .map_err(|e| CacheError::Write { source: e })?;
 
+        drop(conn);
+
         Ok(())
     }
 
@@ -227,6 +231,8 @@ impl SqliteCache {
         tx.commit()
             .map_err(|e| CacheError::Write { source: e })?;
 
+        drop(conn);
+
         debug!("batch stored {} entries", entries.len());
 
         Ok(())
@@ -259,6 +265,9 @@ impl SqliteCache {
             .filter_map(Result::ok)
             .collect();
 
+        drop(stmt);
+        drop(conn);
+
         Ok(paths)
     }
 
@@ -280,6 +289,8 @@ impl SqliteCache {
         let path_str = path.to_string_lossy();
         conn.execute("DELETE FROM files WHERE path = ?1", params![path_str.as_ref()])
             .map_err(|e| CacheError::Write { source: e })?;
+
+        drop(conn);
 
         Ok(())
     }
@@ -352,6 +363,7 @@ pub enum CacheError {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use tempfile::TempDir;

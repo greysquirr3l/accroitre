@@ -63,7 +63,7 @@ pub struct SshConfig {
 impl SshConfig {
     /// Create a new `SshConfig` with required fields and sensible defaults.
     #[must_use]
-    pub fn new(host: String, user: String, auth: AuthMethod) -> Self {
+    pub const fn new(host: String, user: String, auth: AuthMethod) -> Self {
         Self {
             host,
             port: DEFAULT_SSH_PORT,
@@ -173,6 +173,7 @@ impl SshAdapter {
 
         let mut guard = self.handle.lock().await;
         *guard = Some(handle);
+        drop(guard);
 
         info!("SSH connection established to {addr}");
         Ok(())
@@ -200,6 +201,8 @@ impl SshAdapter {
                 message: "failed to open session channel".to_string(),
                 source: std::io::Error::other(e.to_string()),
             })?;
+
+        drop(guard);
 
         debug!("executing remote command: {command}");
         channel
@@ -243,6 +246,8 @@ impl SshAdapter {
                 source: std::io::Error::other(e.to_string()),
             })?;
 
+        drop(guard);
+
         channel
             .exec(true, command.as_bytes())
             .await
@@ -275,8 +280,11 @@ impl SshAdapter {
     ///
     /// Returns `SshError::Channel` if the disconnect message cannot be sent.
     pub async fn disconnect(&self) -> Result<(), SshError> {
-        let mut guard = self.handle.lock().await;
-        if let Some(handle) = guard.take() {
+        let handle_opt = {
+            let mut guard = self.handle.lock().await;
+            guard.take()
+        };
+        if let Some(handle) = handle_opt {
             handle
                 .disconnect(Disconnect::ByApplication, "closing", "en")
                 .await
@@ -403,6 +411,7 @@ impl SshAdapter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

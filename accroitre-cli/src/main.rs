@@ -245,14 +245,17 @@ fn main() {
 }
 
 fn run_copy(args: &CopyArgs) -> i32 {
-    use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
 
     let src_loc = parse_location(&args.source);
     let dst_loc = parse_location(&args.destination);
 
     // Only local-to-local is wired in this task.
-    if !matches!((&src_loc, &dst_loc), (Location::Local(_), Location::Local(_))) {
+    if !matches!(
+        (&src_loc, &dst_loc),
+        (Location::Local(_), Location::Local(_))
+    ) {
         eprintln!("Remote transfers are not yet implemented.");
         return pipeline::EXIT_FAILURE;
     }
@@ -284,7 +287,11 @@ fn run_copy(args: &CopyArgs) -> i32 {
         }
     };
 
-    let result = rt.block_on(pipeline::run_local_pipeline(args, &tui, Arc::clone(&cancelled)));
+    let result = rt.block_on(pipeline::run_local_pipeline(
+        args,
+        &tui,
+        Arc::clone(&cancelled),
+    ));
 
     // Always finish the TUI (prints summary).
     tui.finish();
@@ -309,9 +316,7 @@ fn ctrlc_handler(cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>) {
             .enable_all()
             .build();
         if let Ok(rt) = rt {
-            let _ = rt.block_on(async {
-                tokio::signal::ctrl_c().await
-            });
+            let _ = rt.block_on(async { tokio::signal::ctrl_c().await });
             cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
             eprintln!("\nInterrupted — finishing current operation…");
         }
@@ -344,6 +349,7 @@ fn run_update(args: &UpdateArgs) -> i32 {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use clap::Parser;
@@ -516,10 +522,7 @@ mod tests {
             Cli::try_parse_from(["accro", "hash", "--algorithm", "blake3", "/a", "/b"]).unwrap();
         if let Some(Commands::Hash(args)) = cli.command {
             assert_eq!(args.algorithm, "blake3");
-            assert_eq!(
-                args.paths,
-                vec![PathBuf::from("/a"), PathBuf::from("/b")]
-            );
+            assert_eq!(args.paths, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
         } else {
             panic!("Expected Hash command");
         }

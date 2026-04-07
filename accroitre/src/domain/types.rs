@@ -34,7 +34,7 @@ pub enum Hash {
 impl Hash {
     /// Returns the algorithm used to produce this hash.
     #[must_use]
-    pub fn algorithm(&self) -> HashAlgorithm {
+    pub const fn algorithm(&self) -> HashAlgorithm {
         match self {
             Self::XxHash128(_) => HashAlgorithm::XxHash128,
             Self::Blake3(_) => HashAlgorithm::Blake3,
@@ -43,7 +43,7 @@ impl Hash {
 
     /// Returns the raw hash bytes.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         match self {
             Self::XxHash128(b) => b,
             Self::Blake3(b) => b,
@@ -99,7 +99,7 @@ pub struct FileEntry {
 impl FileEntry {
     /// Create a new `FileEntry` with only path and size known.
     #[must_use]
-    pub fn new(path: PathBuf, size: u64) -> Self {
+    pub const fn new(path: PathBuf, size: u64) -> Self {
         Self {
             path,
             size,
@@ -139,7 +139,7 @@ pub struct CopyPlan {
 impl CopyPlan {
     /// Create a new empty copy plan.
     #[must_use]
-    pub fn new(source_root: PathBuf, dest_root: PathBuf) -> Self {
+    pub const fn new(source_root: PathBuf, dest_root: PathBuf) -> Self {
         Self {
             source_root,
             dest_root,
@@ -209,6 +209,7 @@ impl CopyStats {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 
