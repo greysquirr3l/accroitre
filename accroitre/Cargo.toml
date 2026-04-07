@@ -21,6 +21,7 @@ tracing = { workspace = true }
 glob = { workspace = true }
 xxhash-rust = { workspace = true }
 blake3 = { workspace = true }
+chrono = { workspace = true }
 rayon = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
