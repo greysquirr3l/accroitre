@@ -1,0 +1,76 @@
+[workspace]
+members = [
+    "accroitre",
+    "accroitre-cli",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/greysquirr3l/accroitre"
+readme = "README.md"
+keywords = ["file-copy", "deduplication", "ssh", "backup", "cli"]
+categories = ["command-line-utilities", "filesystem"]
+
+[workspace.dependencies]
+# Core error handling
+thiserror = "2"
+anyhow = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Hashing
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+blake3 = "1"
+
+# Parallel computation
+rayon = "1"
+
+# Tracing / logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Progress bars and spinners
+indicatif = "0.17"
+console = "0.15"
+
+# SSH
+russh = "0.46"
+russh-keys = "0.46"
+
+# SQLite
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Tar streaming
+tar = "0.4"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Byte buffers
+bytes = "1"
+
+# File system utilities
+walkdir = "2"
+glob = "0.3"
+
+# POSIX / libc bindings
+nix = { version = "0.29", features = ["fs", "ioctl"] }
+libc = "0.2"
+
+# Unique identifiers
+ulid = { version = "1", features = ["serde"] }
+
+# Temp files (for tests)
+tempfile = "3"

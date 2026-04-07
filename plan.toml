@@ -1,0 +1,832 @@
+# plan.toml — Accroître: High-Speed File Copier with Dedup & SSH Streaming
+#
+# A Rust reimplementation of fast-copy that is faster, safer, and more capable.
+# Two crates: accroitre (library, published to crates.io) and accroitre-cli
+# (binary, `accro` command). Collapsed hexagonal architecture with domain ports
+# in the library crate and adapter implementations selected at build time.
+#
+# Run:
+#   wiggum validate plan.toml
+#   wiggum generate plan.toml --dry-run
+#   wiggum generate plan.toml
+
+# ─── Project ──────────────────────────────────────────────────────────────────
+
+[project]
+name        = "accroitre"
+description = """
+Accroître is a high-speed, cross-platform file copier written in Rust. It reads
+files in physical disk order to eliminate random seeks on HDDs, deduplicates
+content via xxHash-128 or BLAKE3 (copies once, hard-links the rest), streams
+small files through batched tar pipes, and transfers over SSH without SFTP.
+Designed to be hands-down better than rsync, scp, fast-copy, and anything else
+for local copies, USB/NAS backups, and remote SSH transfers.
+
+Architecture: collapsed hexagonal (DDD-lite). Two workspace crates:
+  - accroitre       — library crate (published to crates.io), contains domain
+                      model, port traits, and adapter implementations
+  - accroitre-cli   — binary crate (`accro` command), rich TUI with braille
+                      spinners and progress bars
+"""
+language     = "rust"
+path         = "/Users/nickcampbell/Projects/rust/accroitre"
+
+[orchestrator]
+persona = """You are a senior Rust systems engineer specializing in high-performance
+I/O, file systems, and network protocols. You write idiomatic Rust 2024 edition code
+with collapsed hexagonal architecture."""
+strategy = "standard"
+rules = [
+    "Rust edition 2024, stable toolchain 1.94.1 only — no nightly features.",
+    "Never use .expect() or .unwrap() on Result/Option — use ? or explicit match/if let.",
+    "Never use index slicing that can panic (e.g. &vec[i], &s[0..n]) — use .get() with explicit handling.",
+    "All code must compile with clippy::pedantic at maximum sensitivity with zero warnings.",
+    "Do not add #[allow(clippy::...)] suppression attributes in production code unless absolutely unavoidable.",
+    "Keep domain types and port traits free of I/O framework dependencies (no tokio, no reqwest in domain module).",
+    "All error types use thiserror; anyhow only in the CLI binary crate.",
+    "Use conventional commits for all commit messages.",
+    "Use Coraline (coraline_* MCP tools) for code navigation when exploring the codebase.",
+    "Two workspace crates: accroitre (library, published) and accroitre-cli (binary, not published).",
+    "The library crate is the only crate published to crates.io.",
+    "The binary crate produces the `accro` CLI command.",
+    "Use LazyLock instead of lazy_static or once_cell.",
+    "Prefer async closures (async || {}) where appropriate — Rust 2024 edition feature.",
+    "Use let chains (if let && let) where they improve readability — Rust 2024 edition feature.",
+]
+
+# ─── Preflight ────────────────────────────────────────────────────────────────
+
+[preflight]
+build = "cargo build --workspace"
+test  = "cargo test --workspace"
+lint  = "cargo clippy --workspace -- -D warnings -W clippy::pedantic"
+audit = "cargo deny check"
+
+# ─── Evaluator ────────────────────────────────────────────────────────────────
+
+[evaluator]
+persona        = "You are a skeptical QA engineer who verifies every claim against the actual codebase."
+pass_threshold = 7
+hard_fail      = true
+test_tool      = "cargo test --workspace"
+
+# ─── Phase 1: Workspace Scaffold ─────────────────────────────────────────────
+
+[[phases]]
+name  = "Workspace Scaffold"
+order = 1
+
+[[phases.tasks]]
+slug       = "workspace-scaffold"
+title      = "Cargo workspace, CI pipeline, and repo hygiene"
+goal       = "Bootstrap the project with a compilable workspace containing two crates, GitHub Actions CI, and linting/audit config."
+depends_on = []
+hints = [
+    "Workspace root Cargo.toml with members = ['accroitre', 'accroitre-cli'].",
+    "accroitre crate: src/lib.rs — library crate published to crates.io.",
+    "accroitre-cli crate: src/main.rs with [[bin]] name = 'accro' — binary, not published.",
+    "accroitre-cli depends on accroitre (path = '../accroitre').",
+    "edition = '2024', rust-version = '1.94.1' in workspace.package.",
+    "Add clippy.toml with msrv = '1.94.1'.",
+    "Add rustfmt.toml: edition = '2024', imports_granularity = 'Crate', group_imports = 'StdExternalCrate'.",
+    "Add deny.toml (cargo-deny) for license and advisory checks.",
+    "Add build.rs in accroitre-cli that embeds the git SHA at compile time: cargo:rustc-env=ACCRO_GIT_SHA via `git rev-parse --short HEAD`. Rerun-if-changed on ../.git/HEAD and ../.git/refs/heads/. Fallback to 'unknown' if git is unavailable.",
+    "In the CLI, expose version as `env!('CARGO_PKG_VERSION')` combined with `env!('ACCRO_GIT_SHA')` for output like '0.1.0 (abc1234)'.",
+    "GitHub Actions CI: build + clippy + test on ubuntu-latest and macos-latest.",
+    "Dual license: MIT OR Apache-2.0.",
+]
+test_hints = [
+    "CI must pass: green build + clippy with -D warnings + cargo test.",
+    "`cargo deny check` must pass.",
+]
+must_haves = [
+    "Workspace Cargo.toml with edition = '2024' and rust-version = '1.94.1'",
+    "Two crates: accroitre (lib) and accroitre-cli (bin, name = 'accro')",
+    ".github/workflows/ci.yml runs build, clippy, test, and deny on ubuntu + macos",
+    "clippy.toml, rustfmt.toml, deny.toml present",
+    "LICENSE-MIT and LICENSE-APACHE present",
+    "accroitre-cli/build.rs embeds git SHA via ACCRO_GIT_SHA env var",
+]
+evaluation_criteria = [
+    "Workspace builds clean with zero clippy warnings under pedantic",
+    "CI pipeline runs on both ubuntu-latest and macos-latest",
+    "cargo-deny config covers licenses and advisories",
+    "accroitre-cli binary is named 'accro'",
+    "`accro version` outputs version string with git SHA (e.g. '0.1.0 (abc1234)')",
+]
+
+# ─── Phase 2: Domain Model ───────────────────────────────────────────────────
+
+[[phases]]
+name  = "Domain Model"
+order = 2
+
+[[phases.tasks]]
+slug       = "domain-types"
+title      = "Core domain types and error hierarchy"
+goal       = "Define the pure domain layer: file metadata, copy plan, dedup index, and error types with no I/O dependencies."
+depends_on = ["workspace-scaffold"]
+hints = [
+    "Place in accroitre crate under src/domain/.",
+    "FileEntry: path (PathBuf), size (u64), hash (Option<Hash>), physical_offset (Option<u64>), permissions (u32).",
+    "Hash: enum wrapping XxHash128([u8; 16]) and Blake3([u8; 32]).",
+    "CopyPlan: source_root, dest_root, entries sorted by physical_offset, dedup_groups (Vec<Vec<usize>> mapping unique→duplicates).",
+    "DedupGroup: canonical file index + Vec of duplicate file indices.",
+    "CopyStats: files_total, files_copied, files_linked, files_skipped, files_errored, bytes_written, bytes_saved_dedup, elapsed.",
+    "TransferMode enum: LocalToLocal, LocalToRemote, RemoteToLocal, RemoteToRemote.",
+    "Error types with thiserror: ScanError, HashError, CopyError, VerifyError, SshError, SpaceError.",
+    "No tokio, no I/O crates in this module — pure data types and traits only.",
+]
+test_hints = [
+    "Unit test CopyPlan construction with sample FileEntry data.",
+    "Test Hash equality and display formatting.",
+    "Test error type conversions.",
+]
+must_haves = [
+    "All domain types derive Debug, Clone where appropriate",
+    "All domain types derive Serialize/Deserialize",
+    "Zero I/O dependencies in the domain module",
+    "Error types use thiserror with descriptive messages",
+]
+evaluation_criteria = [
+    "No tokio, reqwest, or I/O imports in src/domain/",
+    "All domain types implement Debug",
+    "Error types provide sufficient context for diagnosis",
+]
+
+[[phases.tasks]]
+slug       = "port-traits"
+title      = "Port traits for file system, hashing, and transfer"
+goal       = "Define the hexagonal port traits that adapters will implement."
+depends_on = ["domain-types"]
+hints = [
+    "Place in accroitre crate under src/ports/.",
+    "FileSystemPort: scan_tree, read_physical_offsets, check_free_space, create_hard_link, set_permissions.",
+    "HasherPort: hash_file, hash_bytes — returns domain::Hash.",
+    "CopierPort: copy_file (large files with buffer), stream_batch (small files via tar pipe).",
+    "VerifierPort: verify_file (compare hash after copy).",
+    "SshPort: connect, exec_command, open_channel, stream_tar_upload, stream_tar_download.",
+    "CachePort: load_hash_cache, save_hash_cache, lookup_hash, store_hash — for cross-run dedup database.",
+    "ProgressPort: on_scan_progress, on_hash_progress, on_copy_progress, on_verify_progress — for UI updates.",
+    "All traits are async (use async fn in trait — Rust 2024 edition supports this).",
+    "All traits are Send + Sync + 'static for use with tokio.",
+    "Traits reference only domain types, never concrete adapter types.",
+]
+test_hints = [
+    "Traits compile and are object-safe where needed.",
+    "Mock implementations can be created for testing.",
+]
+must_haves = [
+    "All port traits are async",
+    "All port traits are Send + Sync + 'static",
+    "No concrete I/O types in trait signatures — only domain types",
+    "ProgressPort is generic enough for both TUI and headless use",
+]
+evaluation_criteria = [
+    "Port traits reference only domain types",
+    "Traits are usable as dyn Trait (object-safe) or with generics",
+    "ProgressPort supports both interactive and non-interactive consumers",
+]
+
+# ─── Phase 3: Core Engine ────────────────────────────────────────────────────
+
+[[phases]]
+name  = "Core Engine"
+order = 3
+
+[[phases.tasks]]
+slug       = "scan-engine"
+title      = "Directory tree scanner with physical offset resolution"
+goal       = "Implement the filesystem scanner that walks source trees, collects metadata, and resolves on-disk physical offsets for block-order reading."
+depends_on = ["port-traits"]
+hints = [
+    "Place in accroitre crate under src/engine/scan.rs.",
+    "Walk the source tree recursively, collecting FileEntry for each file.",
+    "On Linux: use FIEMAP ioctl to get physical block offsets.",
+    "On macOS: use fcntl F_LOG2PHYS to get physical offsets.",
+    "On Windows: use FSCTL_GET_RETRIEVAL_POINTERS (stretch goal — can stub initially).",
+    "Sort entries by physical_offset for sequential disk reads.",
+    "Support exclude patterns: glob-based file/directory exclusion.",
+    "Use tokio::fs::read_dir for async directory walking.",
+    "Emit progress events via ProgressPort during scanning.",
+    "Handle symlinks: follow by default, skip with --no-follow option.",
+    "Handle permission errors gracefully — log and continue, don't abort.",
+]
+test_hints = [
+    "Test scan of a temporary directory with known structure.",
+    "Test exclude patterns filter correctly.",
+    "Test that permission errors are collected, not fatal.",
+]
+must_haves = [
+    "Physical offset resolution on Linux (FIEMAP) and macOS (fcntl)",
+    "Entries sorted by physical offset for sequential I/O",
+    "Exclude pattern support",
+    "Graceful handling of permission errors",
+]
+evaluation_criteria = [
+    "Physical offset resolution works on the current platform",
+    "Scanning a directory with 10k+ files completes without error",
+    "Exclude patterns correctly filter files and directories",
+]
+
+[[phases.tasks]]
+slug       = "hash-engine"
+title      = "Parallel file hashing with xxHash-128 and BLAKE3"
+goal       = "Implement high-throughput parallel file hashing using rayon for CPU parallelism, with configurable algorithm selection."
+depends_on = ["port-traits"]
+hints = [
+    "Place in accroitre crate under src/engine/hash.rs.",
+    "Default algorithm: xxHash-128 (fast, non-cryptographic) via the xxhash-rust crate.",
+    "Fallback/optional: BLAKE3 (fast, cryptographic) via the blake3 crate.",
+    "Use rayon for parallel hashing across multiple files — no GIL, true CPU parallelism.",
+    "Read files in 64KB chunks for hashing — configurable buffer size.",
+    "Integrate with CachePort: check cache before hashing, store after.",
+    "Emit progress events via ProgressPort (files hashed, bytes processed).",
+    "Thread count configurable (default: num_cpus).",
+]
+test_hints = [
+    "Test hash consistency: same file produces same hash.",
+    "Test both xxHash-128 and BLAKE3 produce correct known digests.",
+    "Benchmark: hash throughput on a large file.",
+]
+must_haves = [
+    "Parallel hashing with rayon",
+    "Both xxHash-128 and BLAKE3 supported",
+    "Cache integration for cross-run dedup",
+    "Progress reporting during hashing",
+]
+evaluation_criteria = [
+    "Hashing utilizes multiple CPU cores via rayon",
+    "Hash cache avoids re-hashing unchanged files",
+    "Throughput is within 80% of raw disk read speed on SSD",
+]
+
+[[phases.tasks]]
+slug       = "dedup-engine"
+title      = "Content-aware deduplication engine"
+goal       = "Group files by hash to identify duplicates. Each unique file is copied once; duplicates become hard links."
+depends_on = ["hash-engine"]
+hints = [
+    "Place in accroitre crate under src/engine/dedup.rs.",
+    "Build DedupGroups from hashed FileEntry list.",
+    "First pass: group by size (cheap pre-filter — different sizes can't be dupes).",
+    "Second pass: hash only files in size-collision groups.",
+    "Single-file groups: no hash needed, just copy.",
+    "Output: CopyPlan with unique files marked for copy and duplicates marked for hard-link.",
+    "Report dedup stats: total files, unique files, duplicate files, bytes saved.",
+    "Cross-run dedup: use CachePort to persist hashes in SQLite at the destination root.",
+]
+test_hints = [
+    "Test: two identical files produce one copy + one hard-link.",
+    "Test: files with same size but different content are both copied.",
+    "Test: single unique file is just copied, no hashing overhead.",
+]
+must_haves = [
+    "Size pre-filter to avoid unnecessary hashing",
+    "Correct grouping — no false dedup (hash collisions are astronomically unlikely but handle gracefully)",
+    "Cross-run cache for incremental operations",
+    "Stats reporting for dedup savings",
+]
+evaluation_criteria = [
+    "Duplicate files are correctly identified and grouped",
+    "Size pre-filter reduces unnecessary hash operations",
+    "Dedup stats accurately reflect savings",
+]
+
+[[phases.tasks]]
+slug       = "copy-engine"
+title      = "Block-order copy engine with large file buffers and tar streaming"
+goal       = "Copy files at maximum sequential disk speed: large files with configurable buffers, small files bundled into tar stream batches."
+depends_on = ["scan-engine", "dedup-engine"]
+hints = [
+    "Place in accroitre crate under src/engine/copy.rs.",
+    "Large files (>= 1MB): copy with configurable buffer (default 64MB) using copy_file_range(2) on Linux or sendfile(2) where available.",
+    "On macOS APFS: attempt clonefile(2) first for instant CoW copy, fall back to buffered copy.",
+    "Small files: batch into tar stream (producer→consumer pipe, no temp file on disk) for reduced syscall overhead.",
+    "Hard-link duplicates from dedup groups after their canonical file is copied.",
+    "Preserve file permissions.",
+    "Pre-flight space check: verify destination has enough free space for the deduplicated data.",
+    "Progress reporting: per-file and per-byte progress events.",
+    "Configurable buffer size via --buffer flag (default 64MB).",
+    "Process files in physical disk order (from scan engine sort).",
+]
+test_hints = [
+    "Test: copy a directory tree and verify file contents match.",
+    "Test: hard-links are created for duplicate files.",
+    "Test: space check fails gracefully when destination is too small.",
+    "Benchmark: copy throughput on SSD vs HDD.",
+]
+must_haves = [
+    "copy_file_range / clonefile / sendfile used where available",
+    "Small file tar streaming — no temp files",
+    "Pre-flight space check",
+    "Physical disk order preserved during copy",
+    "File permissions preserved",
+]
+evaluation_criteria = [
+    "Platform-optimal syscalls used (copy_file_range on Linux, clonefile on macOS APFS)",
+    "Small files are batched, not copied one-by-one",
+    "Pre-flight space check prevents mid-copy failures",
+    "Copy throughput approaches raw sequential disk speed",
+]
+
+[[phases.tasks]]
+slug       = "verify-engine"
+title      = "Post-copy verification engine"
+goal       = "Verify every copied file by recomputing its hash at the destination and comparing against the source hash."
+depends_on = ["copy-engine"]
+hints = [
+    "Place in accroitre crate under src/engine/verify.rs.",
+    "Recompute hash of each copied file on the destination.",
+    "Compare against the source hash stored in CopyPlan.",
+    "Parallel verification using rayon (same as hash engine).",
+    "Report: files verified, files failed, which files failed.",
+    "Verification is enabled by default, skippable with --no-verify flag.",
+    "Hard-linked files: verify the canonical copy only (links share the same inode).",
+]
+test_hints = [
+    "Test: verification passes for correctly copied files.",
+    "Test: verification detects a corrupted file (manually tamper after copy).",
+    "Test: hard-linked files are verified only once.",
+]
+must_haves = [
+    "Every copied file is verified by default",
+    "Parallel verification for speed",
+    "Clear reporting of failed verifications",
+    "Hard-links verified only once (canonical copy)",
+]
+evaluation_criteria = [
+    "Verification catches deliberately corrupted files",
+    "Hard-linked files are not re-verified redundantly",
+    "Verification speed is comparable to hash speed",
+]
+
+# ─── Phase 4: SSH Transport ──────────────────────────────────────────────────
+
+[[phases]]
+name  = "SSH Transport"
+order = 4
+
+[[phases.tasks]]
+slug       = "ssh-adapter"
+title      = "Async SSH transport with russh"
+goal       = "Implement the SshPort adapter using russh for async, multiplexed SSH connections."
+depends_on = ["port-traits"]
+hints = [
+    "Place in accroitre crate under src/adapters/ssh.rs.",
+    "Use the russh crate for async SSH.",
+    "Support: password auth, key-based auth (ed25519, RSA), SSH agent forwarding.",
+    "Connection pooling: reuse SSH sessions for multiple operations.",
+    "Multiplexed channels: hash, copy, and verify can share one SSH connection.",
+    "Known hosts handling: respect ~/.ssh/known_hosts, prompt on unknown.",
+    "Timeout handling: configurable connection and command timeouts.",
+    "Authentication retry: up to 3 attempts on auth failure.",
+]
+test_hints = [
+    "Test key parsing for ed25519 and RSA keys.",
+    "Integration test with a local SSH server (if available in CI).",
+    "Test timeout handling on connection failure.",
+]
+must_haves = [
+    "Password and key-based authentication",
+    "Connection reuse / multiplexing",
+    "Graceful timeout and retry handling",
+    "Known hosts verification (not blindly accepting)",
+]
+evaluation_criteria = [
+    "SSH connections are multiplexed, not opened per-operation",
+    "Known hosts are verified — no blind trust",
+    "Auth retry works up to 3 times with clear error messages",
+]
+
+[[phases.tasks]]
+slug       = "ssh-tar-streaming"
+title      = "Chunked tar streaming over SSH"
+goal       = "Implement tar-pipe streaming for SSH transfers: local↔remote and remote↔remote relay."
+depends_on = ["ssh-adapter", "copy-engine"]
+hints = [
+    "Place in accroitre crate under src/adapters/ssh_tar.rs.",
+    "Local → Remote: stream tar batches (~100MB) over SSH, remote runs tar xf - to extract.",
+    "Remote → Local: remote runs tar cf -, local extracts with streaming extraction.",
+    "Remote → Remote: relay through local machine (source tar cf → SSH → local → SSH → dest tar xf).",
+    "Chunked batches provide: progress updates per batch, error recovery (partial batches don't lose completed work).",
+    "No SFTP dependency: all transfers use raw SSH exec channels with tar.",
+    "SFTP-free operation: works on servers with SFTP disabled (e.g., Synology NAS).",
+    "Large files (>= 1MB): per-chunk progress updates during extraction.",
+    "SSH compression (-z flag): optional, good for slow links.",
+]
+test_hints = [
+    "Test tar stream creation and extraction round-trip locally first.",
+    "Test chunked batching produces correct ~100MB batches.",
+    "Integration test: local→remote copy with verification.",
+]
+must_haves = [
+    "All three modes: local→remote, remote→local, remote→remote",
+    "Chunked streaming with progress per batch",
+    "No SFTP dependency — works with raw SSH + tar",
+    "No temp files during transfer",
+]
+evaluation_criteria = [
+    "Transfer modes work without SFTP",
+    "Remote-to-remote relay works between servers that cannot reach each other",
+    "Chunked batches enable progress reporting and partial recovery",
+]
+
+[[phases.tasks]]
+slug       = "remote-dedup"
+title      = "Remote-side deduplication via SSH"
+goal       = "Run file hashing on remote servers over SSH to enable dedup without downloading all content."
+depends_on = ["ssh-adapter", "dedup-engine"]
+hints = [
+    "If remote has accro installed: invoke `accro hash --json` remotely for native-speed hashing.",
+    "Fallback: use sha256sum or xxhsum over SSH in batches of 5000 files.",
+    "Second fallback: stream file content for local hashing (slowest).",
+    "Batch commands to avoid SSH round-trip overhead.",
+    "Timeout handling: long-running hash operations on large file sets.",
+]
+test_hints = [
+    "Test remote hash command generation.",
+    "Test batch splitting for large file sets.",
+    "Test fallback chain: accro → sha256sum → stream.",
+]
+must_haves = [
+    "Remote hashing avoids unnecessary data transfer",
+    "Fallback chain for servers without accro installed",
+    "Batched execution to minimize SSH round-trips",
+]
+evaluation_criteria = [
+    "Remote dedup detects duplicates without downloading file content",
+    "Fallback chain works correctly when preferred tool is unavailable",
+]
+
+# ─── Phase 5: Cache & Persistence ────────────────────────────────────────────
+
+[[phases]]
+name  = "Cache & Persistence"
+order = 5
+
+[[phases.tasks]]
+slug       = "sqlite-cache"
+title      = "SQLite hash cache for cross-run deduplication"
+goal       = "Implement the CachePort adapter using SQLite to persist file hashes across runs."
+depends_on = ["port-traits"]
+hints = [
+    "Place in accroitre crate under src/adapters/cache.rs.",
+    "Use rusqlite (synchronous SQLite bindings) — cache operations are fast enough to not need async.",
+    "Database location: .accroitre-cache.db at the destination root (like fast-copy).",
+    "Schema: files (path TEXT, size INTEGER, mtime INTEGER, hash BLOB, algo TEXT, PRIMARY KEY (path)).",
+    "Cache invalidation: if size or mtime differ, re-hash the file.",
+    "Cache can be disabled with --no-cache flag.",
+    "WAL mode for concurrent reads during parallel hashing.",
+    "Batch inserts: use transactions for bulk hash storage.",
+]
+test_hints = [
+    "Test store-then-lookup round-trip.",
+    "Test cache invalidation on size change.",
+    "Test cache invalidation on mtime change.",
+    "Test --no-cache disables all cache operations.",
+]
+must_haves = [
+    "Cache invalidation based on size + mtime",
+    "WAL mode for concurrent access",
+    "Batch inserts in transactions for performance",
+    "Disableable with --no-cache",
+]
+evaluation_criteria = [
+    "Cache correctly invalidates stale entries",
+    "Re-runs with unchanged files skip hashing entirely",
+    "Cache operations don't bottleneck the hash pipeline",
+]
+
+[[phases.tasks]]
+slug       = "json-log"
+title      = "Structured JSON logging for all operations"
+goal       = "Implement structured JSON log output recording every action: copied, linked, skipped, errored, with summary stats."
+depends_on = ["copy-engine"]
+hints = [
+    "Place in accroitre crate under src/adapters/log.rs.",
+    "Implement as a ProgressPort adapter that writes JSON.",
+    "Summary: source, destination, mode, files copied/linked/skipped/errored, bytes written, speed, dedup savings.",
+    "Per-file entries: action (copied, linked, skipped, error), path, size, method, link_target, error message.",
+    "Output to file via --log-file flag.",
+    "Use serde_json for serialization.",
+    "Timestamps in RFC 3339 format.",
+]
+test_hints = [
+    "Test JSON output is valid and deserializable.",
+    "Test all action types appear in output.",
+    "Test summary stats are accurate.",
+]
+must_haves = [
+    "Valid JSON output",
+    "Per-file action entries",
+    "Summary with timing and throughput stats",
+    "RFC 3339 timestamps",
+]
+evaluation_criteria = [
+    "JSON log is machine-parseable and contains complete operation record",
+    "Summary stats match actual operation results",
+]
+
+# ─── Phase 6: CLI Application ────────────────────────────────────────────────
+
+[[phases]]
+name  = "CLI Application"
+order = 6
+
+[[phases.tasks]]
+slug       = "cli-args"
+title      = "clap CLI with full argument parsing"
+goal       = "Wire up the accro CLI with clap derive API, covering all operational modes and flags."
+depends_on = ["workspace-scaffold"]
+hints = [
+    "Place in accroitre-cli crate.",
+    "Binary name: accro.",
+    "Positional args: source destination (both support user@host:/path for SSH).",
+    "Flags: --buffer (MB, default 64), --threads (default: num_cpus), --dry-run, --no-verify, --no-dedup, --no-cache, --force, --overwrite, --exclude (repeatable), --log-file.",
+    "SSH flags: --ssh-src-port, --ssh-src-key, --ssh-src-password, --ssh-dst-port, --ssh-dst-key, --ssh-dst-password, -z/--compress.",
+    "Subcommands: (default) copy, hash (hash files and output JSON for remote dedup), version.",
+    "Use clap derive API with doc comments for help text.",
+    "Parse source/destination to detect local vs SSH paths (user@host:/path pattern).",
+    "--quiet flag: suppress TUI, only output errors and final summary.",
+]
+test_hints = [
+    "Test argument parsing for all flag combinations.",
+    "Test SSH path detection: 'user@host:/path' → Remote, '/local/path' → Local.",
+    "Test --exclude accepts multiple values.",
+]
+must_haves = [
+    "All flags from fast-copy are supported",
+    "SSH path parsing correctly identifies remote targets",
+    "clap derive API with doc-comment help text",
+    "--quiet mode for non-interactive/scripted use",
+]
+evaluation_criteria = [
+    "All fast-copy flags have equivalents in accro",
+    "--help output is clear and well-organized",
+    "SSH path parsing handles edge cases (IPv6, non-standard ports)",
+]
+
+[[phases.tasks]]
+slug       = "cli-tui"
+title      = "Rich TUI with braille spinners and progress bars"
+goal       = "Build the interactive CLI experience: braille activity spinners, multi-bar progress display, phase transitions, and final summary."
+depends_on = ["cli-args", "port-traits"]
+hints = [
+    "Place in accroitre-cli crate.",
+    "Use indicatif for progress bars and spinners.",
+    "Braille spinner (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) for active operations: scanning, hashing, copying, verifying.",
+    "Multi-progress: show overall progress bar + per-file progress for large files.",
+    "Phase display: clear labels for each phase (Scanning → Hashing → Dedup → Copying → Verifying).",
+    "Speed display: MB/s in real-time, updated per second.",
+    "Dedup stats: show live count of duplicates found during hash phase.",
+    "ETA: estimated time remaining based on current throughput.",
+    "Final summary: total files, copied, linked, skipped, errors, bytes, speed, dedup savings, elapsed time.",
+    "Color support: use console crate for terminal color detection.",
+    "Implement ProgressPort to bridge engine events to TUI updates.",
+    "Respect --quiet flag: fall back to minimal stderr output.",
+    "Terminal width detection for responsive layout.",
+]
+test_hints = [
+    "Test ProgressPort adapter receives and formats events correctly.",
+    "Test --quiet mode produces minimal output.",
+    "Test summary formatting with various stat combinations.",
+]
+must_haves = [
+    "Braille spinners for active operations",
+    "Multi-progress bars (overall + per-file for large files)",
+    "Real-time speed and ETA display",
+    "Final summary with dedup savings",
+    "Respects --quiet flag",
+    "No panics on narrow terminals",
+]
+evaluation_criteria = [
+    "TUI is visually polished with braille spinners and progress bars",
+    "Speed and ETA are accurate and updated in real-time",
+    "--quiet mode produces no TUI elements",
+    "Summary is comprehensive and human-readable",
+]
+
+[[phases.tasks]]
+slug       = "cli-wiring"
+title      = "Wire CLI to engine: end-to-end copy pipeline"
+goal       = "Connect the CLI argument parsing and TUI to the engine, executing the full copy pipeline from scan through verify."
+depends_on = ["cli-tui", "copy-engine", "verify-engine", "sqlite-cache", "json-log"]
+hints = [
+    "Place in accroitre-cli crate src/main.rs and src/pipeline.rs.",
+    "Pipeline: parse args → detect mode → scan → hash → dedup → space check → copy → verify → summary.",
+    "Wire concrete adapters to port traits based on detected mode.",
+    "LocalToLocal: use filesystem adapters directly.",
+    "LocalToRemote / RemoteToLocal: wire SSH adapter + tar streaming.",
+    "RemoteToRemote: wire relay mode.",
+    "Error handling: anyhow in the CLI, convert library thiserror types.",
+    "Exit codes: 0 success, 1 partial failure (some files errored), 2 total failure.",
+    "Ctrl-C handling: graceful shutdown, report partial progress.",
+    "tokio runtime: configure with --threads for worker count.",
+]
+test_hints = [
+    "Integration test: end-to-end local copy of a temp directory.",
+    "Test dry-run mode produces plan without copying.",
+    "Test exit codes for success and failure scenarios.",
+]
+must_haves = [
+    "End-to-end pipeline from arguments to completion",
+    "Correct adapter selection based on transfer mode",
+    "Graceful Ctrl-C handling with partial progress report",
+    "Meaningful exit codes",
+]
+evaluation_criteria = [
+    "Full local-to-local copy works end-to-end",
+    "Dry-run mode shows plan without side effects",
+    "Ctrl-C produces a clean partial report, not a panic",
+]
+
+# ─── Phase 7: Platform Optimization ──────────────────────────────────────────
+
+[[phases]]
+name  = "Platform Optimization"
+order = 7
+
+[[phases.tasks]]
+slug       = "linux-optimizations"
+title      = "Linux-specific I/O optimizations"
+goal       = "Maximize throughput on Linux using io_uring, copy_file_range, splice, and sendfile."
+depends_on = ["copy-engine"]
+hints = [
+    "Use io_uring (via tokio-uring or io-uring crate) for batched async I/O on supported kernels.",
+    "copy_file_range(2): kernel-to-kernel copy, data never hits userspace.",
+    "splice(2): zero-copy pipe-to-file and file-to-pipe transfers.",
+    "sendfile(2): file-to-socket zero-copy for network transfers.",
+    "Feature-gate behind a 'linux' feature flag for cross-compilation.",
+    "Runtime detection: check kernel version for io_uring support, fall back gracefully.",
+    "Direct I/O (O_DIRECT): optional for bypassing page cache on large sequential copies.",
+]
+test_hints = [
+    "Test copy_file_range produces identical output to buffered copy.",
+    "Benchmark: compare io_uring vs standard async I/O.",
+    "Test graceful fallback on older kernels without io_uring.",
+]
+must_haves = [
+    "copy_file_range used by default on Linux",
+    "Graceful fallback when advanced features are unavailable",
+    "No unsafe code without clear justification and encapsulation",
+]
+evaluation_criteria = [
+    "copy_file_range is used for large file copies on Linux",
+    "Falls back cleanly on kernels without io_uring",
+    "Benchmarks show measurable throughput improvement",
+]
+
+[[phases.tasks]]
+slug       = "macos-optimizations"
+title      = "macOS-specific I/O optimizations"
+goal       = "Maximize throughput on macOS using clonefile, fcopyfile, and APFS CoW."
+depends_on = ["copy-engine"]
+hints = [
+    "clonefile(2): instant CoW copy on APFS — no data written, just metadata.",
+    "fcopyfile(3): kernel-optimized copy with metadata preservation.",
+    "fcntl F_LOG2PHYS: physical offset resolution already in scan engine.",
+    "Detect APFS vs HFS+: clonefile only works on APFS, fall back to fcopyfile on HFS+.",
+    "Feature-gate behind a 'macos' feature flag.",
+    "F_NOCACHE: bypass unified buffer cache for large sequential reads.",
+]
+test_hints = [
+    "Test clonefile produces a file that shares blocks (check with stat).",
+    "Test fcopyfile preserves file metadata.",
+    "Test fallback from clonefile to fcopyfile on HFS+.",
+]
+must_haves = [
+    "clonefile used on APFS by default",
+    "Graceful fallback to fcopyfile on non-APFS volumes",
+    "Physical offset resolution via fcntl",
+]
+evaluation_criteria = [
+    "clonefile produces instant copies on APFS",
+    "Non-APFS volumes fall back gracefully",
+    "Copy speed on APFS is near-instantaneous for dedup-eligible files",
+]
+
+[[phases.tasks]]
+slug       = "windows-support"
+title      = "Windows platform support"
+goal       = "Implement Windows-specific file operations: long path support, FSCTL optimizations, and ReFS block cloning."
+depends_on = ["copy-engine"]
+hints = [
+    "Long path support: \\\\?\\ prefix for paths exceeding 260 characters.",
+    "FSCTL_GET_RETRIEVAL_POINTERS: physical offset resolution on NTFS.",
+    "FSCTL_DUPLICATE_EXTENTS_TO_FILE: block cloning on ReFS (like clonefile on APFS).",
+    "CopyFileEx: kernel-optimized copy with progress callback.",
+    "CreateHardLink: hard-link creation for dedup.",
+    "Feature-gate behind a 'windows' feature flag.",
+    "Use the windows-sys crate for FFI bindings.",
+]
+test_hints = [
+    "Test long path handling with paths > 260 chars.",
+    "Test hard-link creation on NTFS.",
+    "Test fallback when ReFS block cloning is unavailable.",
+]
+must_haves = [
+    "Long path support (> 260 chars)",
+    "Hard-link creation on NTFS",
+    "Graceful fallback for ReFS-only features",
+]
+evaluation_criteria = [
+    "Paths exceeding 260 characters are handled correctly",
+    "Hard-links work on NTFS volumes",
+    "Windows build compiles and passes tests in CI",
+]
+
+# ─── Phase 8: Advanced Features ──────────────────────────────────────────────
+
+[[phases]]
+name  = "Advanced Features"
+order = 8
+
+[[phases.tasks]]
+slug       = "resume-support"
+title      = "Resumable copy with manifest tracking"
+goal       = "Support resuming interrupted copies by tracking progress in a manifest file at the destination."
+depends_on = ["cli-wiring"]
+hints = [
+    "Manifest file: .accroitre-manifest.json at destination root.",
+    "Track: which files have been copied, verified, and linked.",
+    "On resume: read manifest, skip already-completed files, continue from where interrupted.",
+    "Manifest updated atomically (write to temp, rename) to survive crashes.",
+    "Auto-detected: if manifest exists at destination, offer to resume.",
+    "--force flag: ignore manifest and start fresh.",
+    "Manifest includes source hash for each completed file — verify still valid on resume.",
+]
+test_hints = [
+    "Test: interrupt copy mid-way, resume completes remaining files.",
+    "Test: resumed files are verified against original hashes.",
+    "Test: --force ignores existing manifest.",
+]
+must_haves = [
+    "Atomic manifest writes (crash-safe)",
+    "Resume skips already-verified files",
+    "Source hash validation on resume (detect source changes)",
+]
+evaluation_criteria = [
+    "Interrupted copy resumes correctly without re-copying completed files",
+    "Manifest survives unclean termination",
+    "Changed source files are detected and re-copied on resume",
+]
+
+[[phases.tasks]]
+slug       = "delta-sync"
+title      = "Delta synchronization for incremental updates"
+goal       = "Support incremental sync mode: only copy files that are new or changed since the last run."
+depends_on = ["resume-support", "sqlite-cache"]
+hints = [
+    "Compare source and destination file lists.",
+    "Changed detection: size + mtime comparison (fast), optionally hash comparison (thorough).",
+    "New files: copy normally.",
+    "Changed files: overwrite destination.",
+    "Deleted files: optionally --delete flag removes files at destination not present in source.",
+    "Unchanged files: skip entirely.",
+    "Use the SQLite cache to remember previous source state.",
+    "This makes accro a viable rsync replacement for repeated backups.",
+]
+test_hints = [
+    "Test: incremental sync only copies new/changed files.",
+    "Test: --delete removes orphaned destination files.",
+    "Test: unchanged files are untouched.",
+]
+must_haves = [
+    "Correct change detection (size + mtime)",
+    "New, changed, deleted, and unchanged files handled correctly",
+    "Optional --delete for removing orphaned destination files",
+]
+evaluation_criteria = [
+    "Incremental sync is significantly faster than full copy",
+    "Change detection correctly identifies all changed files",
+    "--delete only removes files not present in source",
+]
+
+[[phases.tasks]]
+slug       = "self-update"
+title      = "Self-update mechanism"
+goal       = "Allow accro to check for and install updates from GitHub releases."
+depends_on = ["cli-wiring"]
+hints = [
+    "accro --check-update: query GitHub releases API, show available versions with release notes.",
+    "accro --update [VERSION]: download and replace the running binary.",
+    "Use self_update crate or implement manually with reqwest + GitHub API.",
+    "Verify download integrity: SHA-256 checksum of the binary.",
+    "Support: Linux (x86_64, aarch64), macOS (arm64, x86_64), Windows (x86_64).",
+]
+test_hints = [
+    "Test version comparison logic.",
+    "Test GitHub API response parsing.",
+    "Mock update download in tests.",
+]
+must_haves = [
+    "Version check without downloading",
+    "Integrity verification of downloaded binary",
+    "Works across all supported platforms",
+]
+evaluation_criteria = [
+    "Update check works without errors",
+    "Downloaded binary is verified before replacing",
+    "Rollback is possible if update fails",
+]

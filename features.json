@@ -1,0 +1,805 @@
+{
+  "project": "accroitre",
+  "tasks": [
+    {
+      "id": "T01",
+      "slug": "workspace-scaffold",
+      "title": "Cargo workspace, CI pipeline, and repo hygiene",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Workspace builds clean with zero clippy warnings under pedantic",
+          "passes": false
+        },
+        {
+          "label": "CI pipeline runs on both ubuntu-latest and macos-latest",
+          "passes": false
+        },
+        {
+          "label": "cargo-deny config covers licenses and advisories",
+          "passes": false
+        },
+        {
+          "label": "accroitre-cli binary is named 'accro'",
+          "passes": false
+        },
+        {
+          "label": "`accro version` outputs version string with git SHA (e.g. '0.1.0 (abc1234)')",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T02",
+      "slug": "domain-types",
+      "title": "Core domain types and error hierarchy",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "No tokio, reqwest, or I/O imports in src/domain/",
+          "passes": false
+        },
+        {
+          "label": "All domain types implement Debug",
+          "passes": false
+        },
+        {
+          "label": "Error types provide sufficient context for diagnosis",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T03",
+      "slug": "port-traits",
+      "title": "Port traits for file system, hashing, and transfer",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Port traits reference only domain types",
+          "passes": false
+        },
+        {
+          "label": "Traits are usable as dyn Trait (object-safe) or with generics",
+          "passes": false
+        },
+        {
+          "label": "ProgressPort supports both interactive and non-interactive consumers",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T04",
+      "slug": "scan-engine",
+      "title": "Directory tree scanner with physical offset resolution",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Physical offset resolution works on the current platform",
+          "passes": false
+        },
+        {
+          "label": "Scanning a directory with 10k+ files completes without error",
+          "passes": false
+        },
+        {
+          "label": "Exclude patterns correctly filter files and directories",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T05",
+      "slug": "hash-engine",
+      "title": "Parallel file hashing with xxHash-128 and BLAKE3",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Hashing utilizes multiple CPU cores via rayon",
+          "passes": false
+        },
+        {
+          "label": "Hash cache avoids re-hashing unchanged files",
+          "passes": false
+        },
+        {
+          "label": "Throughput is within 80% of raw disk read speed on SSD",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T06",
+      "slug": "dedup-engine",
+      "title": "Content-aware deduplication engine",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Duplicate files are correctly identified and grouped",
+          "passes": false
+        },
+        {
+          "label": "Size pre-filter reduces unnecessary hash operations",
+          "passes": false
+        },
+        {
+          "label": "Dedup stats accurately reflect savings",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T07",
+      "slug": "copy-engine",
+      "title": "Block-order copy engine with large file buffers and tar streaming",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Platform-optimal syscalls used (copy_file_range on Linux, clonefile on macOS APFS)",
+          "passes": false
+        },
+        {
+          "label": "Small files are batched, not copied one-by-one",
+          "passes": false
+        },
+        {
+          "label": "Pre-flight space check prevents mid-copy failures",
+          "passes": false
+        },
+        {
+          "label": "Copy throughput approaches raw sequential disk speed",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T08",
+      "slug": "verify-engine",
+      "title": "Post-copy verification engine",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Verification catches deliberately corrupted files",
+          "passes": false
+        },
+        {
+          "label": "Hard-linked files are not re-verified redundantly",
+          "passes": false
+        },
+        {
+          "label": "Verification speed is comparable to hash speed",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T09",
+      "slug": "ssh-adapter",
+      "title": "Async SSH transport with russh",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "SSH connections are multiplexed, not opened per-operation",
+          "passes": false
+        },
+        {
+          "label": "Known hosts are verified — no blind trust",
+          "passes": false
+        },
+        {
+          "label": "Auth retry works up to 3 times with clear error messages",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T10",
+      "slug": "ssh-tar-streaming",
+      "title": "Chunked tar streaming over SSH",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Transfer modes work without SFTP",
+          "passes": false
+        },
+        {
+          "label": "Remote-to-remote relay works between servers that cannot reach each other",
+          "passes": false
+        },
+        {
+          "label": "Chunked batches enable progress reporting and partial recovery",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T11",
+      "slug": "remote-dedup",
+      "title": "Remote-side deduplication via SSH",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Remote dedup detects duplicates without downloading file content",
+          "passes": false
+        },
+        {
+          "label": "Fallback chain works correctly when preferred tool is unavailable",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T12",
+      "slug": "sqlite-cache",
+      "title": "SQLite hash cache for cross-run deduplication",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Cache correctly invalidates stale entries",
+          "passes": false
+        },
+        {
+          "label": "Re-runs with unchanged files skip hashing entirely",
+          "passes": false
+        },
+        {
+          "label": "Cache operations don't bottleneck the hash pipeline",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T13",
+      "slug": "json-log",
+      "title": "Structured JSON logging for all operations",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "JSON log is machine-parseable and contains complete operation record",
+          "passes": false
+        },
+        {
+          "label": "Summary stats match actual operation results",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T14",
+      "slug": "cli-args",
+      "title": "clap CLI with full argument parsing",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "All fast-copy flags have equivalents in accro",
+          "passes": false
+        },
+        {
+          "label": "--help output is clear and well-organized",
+          "passes": false
+        },
+        {
+          "label": "SSH path parsing handles edge cases (IPv6, non-standard ports)",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T15",
+      "slug": "cli-tui",
+      "title": "Rich TUI with braille spinners and progress bars",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "TUI is visually polished with braille spinners and progress bars",
+          "passes": false
+        },
+        {
+          "label": "Speed and ETA are accurate and updated in real-time",
+          "passes": false
+        },
+        {
+          "label": "--quiet mode produces no TUI elements",
+          "passes": false
+        },
+        {
+          "label": "Summary is comprehensive and human-readable",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T16",
+      "slug": "cli-wiring",
+      "title": "Wire CLI to engine: end-to-end copy pipeline",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Full local-to-local copy works end-to-end",
+          "passes": false
+        },
+        {
+          "label": "Dry-run mode shows plan without side effects",
+          "passes": false
+        },
+        {
+          "label": "Ctrl-C produces a clean partial report, not a panic",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T17",
+      "slug": "linux-optimizations",
+      "title": "Linux-specific I/O optimizations",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "copy_file_range is used for large file copies on Linux",
+          "passes": false
+        },
+        {
+          "label": "Falls back cleanly on kernels without io_uring",
+          "passes": false
+        },
+        {
+          "label": "Benchmarks show measurable throughput improvement",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T18",
+      "slug": "macos-optimizations",
+      "title": "macOS-specific I/O optimizations",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "clonefile produces instant copies on APFS",
+          "passes": false
+        },
+        {
+          "label": "Non-APFS volumes fall back gracefully",
+          "passes": false
+        },
+        {
+          "label": "Copy speed on APFS is near-instantaneous for dedup-eligible files",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T19",
+      "slug": "windows-support",
+      "title": "Windows platform support",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Paths exceeding 260 characters are handled correctly",
+          "passes": false
+        },
+        {
+          "label": "Hard-links work on NTFS volumes",
+          "passes": false
+        },
+        {
+          "label": "Windows build compiles and passes tests in CI",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T20",
+      "slug": "resume-support",
+      "title": "Resumable copy with manifest tracking",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Interrupted copy resumes correctly without re-copying completed files",
+          "passes": false
+        },
+        {
+          "label": "Manifest survives unclean termination",
+          "passes": false
+        },
+        {
+          "label": "Changed source files are detected and re-copied on resume",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T21",
+      "slug": "delta-sync",
+      "title": "Delta synchronization for incremental updates",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Incremental sync is significantly faster than full copy",
+          "passes": false
+        },
+        {
+          "label": "Change detection correctly identifies all changed files",
+          "passes": false
+        },
+        {
+          "label": "--delete only removes files not present in source",
+          "passes": false
+        }
+      ]
+    },
+    {
+      "id": "T22",
+      "slug": "self-update",
+      "title": "Self-update mechanism",
+      "passes": false,
+      "criteria": [
+        {
+          "label": "build succeeds",
+          "passes": false
+        },
+        {
+          "label": "all tests pass",
+          "passes": false
+        },
+        {
+          "label": "linter clean",
+          "passes": false
+        },
+        {
+          "label": "implementation matches goal",
+          "passes": false
+        },
+        {
+          "label": "Update check works without errors",
+          "passes": false
+        },
+        {
+          "label": "Downloaded binary is verified before replacing",
+          "passes": false
+        },
+        {
+          "label": "Rollback is possible if update fails",
+          "passes": false
+        }
+      ]
+    }
+  ]
+}

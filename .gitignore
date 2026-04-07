@@ -1,0 +1,11 @@
+/target
+.cargo/
+tasks/
+.vscode/
+.coraline/
+.serena/
+
+tasks/
+IMPLEMENTATION_PLAN.md
+plan.toml
+PROGRESS.md
