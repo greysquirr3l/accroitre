@@ -307,16 +307,9 @@ fn get_available_space(_path: &Path) -> Result<u64, io::Error> {
 
 /// Copy a large file using platform-optimal methods.
 fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), CopyError> {
-    // On macOS, try clonefile first (APFS instant copy-on-write).
+    // On macOS, try clonefile → fcopyfile → buffered copy.
     #[cfg(target_os = "macos")]
-    if config.try_clonefile
-        && let Ok(()) = try_clonefile(src, dest)
-    {
-        debug!(
-            "clonefile succeeded: {} -> {}",
-            src.display(),
-            dest.display()
-        );
+    if let Ok(true) = super::macos_io::try_macos_optimal_copy(src, dest, config.try_clonefile) {
         return Ok(());
     }
 
@@ -326,43 +319,11 @@ fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), C
         return Ok(());
     }
 
-    // Suppress unused warning on non-macOS.
-    #[cfg(not(target_os = "macos"))]
+    // Suppress unused warning on platforms without optimised copy.
     let _ = config.try_clonefile;
 
     // Fall back to buffered copy.
     buffered_copy(src, dest, config.buffer_size)
-}
-
-/// Attempt macOS APFS `clonefile(2)`.
-#[cfg(target_os = "macos")]
-fn try_clonefile(src: &Path, dest: &Path) -> Result<(), CopyError> {
-    use std::ffi::CString;
-
-    let c_src =
-        CString::new(src.to_string_lossy().as_bytes()).map_err(|_| CopyError::FileCopy {
-            src: src.to_path_buf(),
-            dst: dest.to_path_buf(),
-            source: io::Error::new(io::ErrorKind::InvalidInput, "invalid path"),
-        })?;
-    let c_dest =
-        CString::new(dest.to_string_lossy().as_bytes()).map_err(|_| CopyError::FileCopy {
-            src: src.to_path_buf(),
-            dst: dest.to_path_buf(),
-            source: io::Error::new(io::ErrorKind::InvalidInput, "invalid path"),
-        })?;
-
-    // SAFETY: clonefile is a macOS-specific syscall. We pass valid C strings.
-    let ret = unsafe { libc::clonefile(c_src.as_ptr(), c_dest.as_ptr(), 0) };
-    if ret == 0 {
-        Ok(())
-    } else {
-        Err(CopyError::FileCopy {
-            src: src.to_path_buf(),
-            dst: dest.to_path_buf(),
-            source: io::Error::last_os_error(),
-        })
-    }
 }
 
 /// Buffered file copy with configurable buffer size.
