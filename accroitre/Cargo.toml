@@ -18,6 +18,9 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 glob = { workspace = true }
+xxhash-rust = { workspace = true }
+blake3 = { workspace = true }
+rayon = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
