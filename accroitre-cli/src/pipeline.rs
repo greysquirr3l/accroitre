@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use accroitre::adapters::log::JsonLog;
+use accroitre::adapters::manifest::CopyManifest;
 use accroitre::domain::HashAlgorithm;
-use accroitre::engine::copy::{execute_copy_plan, CopyConfig, CopyResult};
+use accroitre::engine::copy::{execute_copy_plan, execute_copy_plan_resumable, CopyConfig, CopyResult};
 use accroitre::engine::dedup::{build_dedup_plan, DedupStats};
 use accroitre::engine::hash::HashConfig;
 use accroitre::engine::scan::{scan_tree, ScanConfig};
@@ -14,6 +15,7 @@ use accroitre::engine::verify::{verify_plan, VerifyConfig, VerifyResult};
 use accroitre::ports::ProgressPort;
 use anyhow::{Context, Result, bail};
 use glob::Pattern;
+use tracing::debug;
 
 use crate::CopyArgs;
 use crate::tui::TuiProgress;
@@ -107,8 +109,15 @@ pub async fn run_local_pipeline(
         return Ok(dry_run_result(&plan, dedup_stats));
     }
 
-    // 4. Copy
-    let copy_result = run_copy(&plan, buffer_size, tui)?;
+    // 4. Load or create manifest for resume support.
+    let mut manifest = load_or_create_manifest(args, &source, &destination, algorithm);
+    let completed = manifest.completed_count();
+    if completed > 0 {
+        debug!("resuming: {completed} files already completed in previous run");
+    }
+
+    // 5. Copy
+    let copy_result = run_copy(&plan, buffer_size, tui, Some(&mut manifest))?;
     if let Some(ref log) = json_log {
         log_copy_results(log, &copy_result, &plan);
     }
@@ -117,8 +126,21 @@ pub async fn run_local_pipeline(
         return Ok(PipelineResult { copy_result, dedup_stats, verify_result: None, cancelled: true });
     }
 
-    // 5. Verify
+    // 6. Verify
     let verify_result = run_verify(args, &plan, algorithm, buffer_size, tui);
+
+    // On successful completion (no copy errors, no verify failures),
+    // remove the manifest since the copy is fully done.
+    if let Err(e) = manifest.save(&destination) {
+        debug!("failed to save manifest after verify: {e}");
+    }
+
+    if copy_result.errors.is_empty()
+        && verify_result.as_ref().is_none_or(|v| v.failures.is_empty())
+    {
+        let _ = CopyManifest::remove(&destination);
+    }
+
     if let Some(ref log) = json_log {
         log.finish();
     }
@@ -235,13 +257,20 @@ fn run_copy(
     plan: &accroitre::domain::CopyPlan,
     buffer_size: usize,
     tui: &TuiProgress,
+    manifest: Option<&mut CopyManifest>,
 ) -> Result<CopyResult> {
     let copy_config = CopyConfig {
         buffer_size,
         small_file_threshold: 32 * 1024,
         try_clonefile: true,
     };
-    let result = execute_copy_plan(plan, &copy_config, tui).context("copy failed")?;
+    let result = if let Some(m) = manifest {
+        execute_copy_plan_resumable(plan, &copy_config, tui, Some(m))
+            .context("copy failed")?
+    } else {
+        execute_copy_plan(plan, &copy_config, tui)
+            .context("copy failed")?
+    };
     tui.update(&accroitre::ports::ProgressUpdate::PhaseComplete { phase: "copy" });
     Ok(result)
 }
@@ -266,6 +295,55 @@ fn run_verify(
     Some(result)
 }
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Load an existing manifest for resuming, create a new one, or return `None`
+/// if the `--force` flag is set.
+fn load_or_create_manifest(
+    args: &CopyArgs,
+    source: &Path,
+    destination: &Path,
+    algorithm: HashAlgorithm,
+) -> CopyManifest {
+    // --force: ignore any existing manifest, start fresh.
+    if args.force {
+        if let Err(e) = CopyManifest::remove(destination) {
+            debug!("failed to remove old manifest on --force: {e}");
+        }
+        return CopyManifest::new(
+            source,
+            destination,
+            Some(&algorithm.to_string()),
+        );
+    }
+
+    // Try to load an existing manifest for resuming.
+    match CopyManifest::load(destination) {
+        Ok(Some(existing)) => {
+            debug!(
+                "resuming from existing manifest ({} files completed)",
+                existing.completed_count()
+            );
+            existing
+        }
+        Ok(None) => {
+            // No existing manifest — create a new one.
+            CopyManifest::new(
+                source,
+                destination,
+                Some(&algorithm.to_string()),
+            )
+        }
+        Err(e) => {
+            // Corrupt manifest — warn and start fresh.
+            debug!("could not load manifest, starting fresh: {e}");
+            CopyManifest::new(
+                source,
+                destination,
+                Some(&algorithm.to_string()),
+            )
+        }
+    }
+}
 
 fn cancelled_result() -> PipelineResult {
     PipelineResult {

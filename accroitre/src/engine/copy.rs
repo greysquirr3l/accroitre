@@ -4,6 +4,10 @@
 //! APFS, `copy_file_range` on Linux, buffered copy elsewhere). Small files are
 //! batched into tar streams for reduced syscall overhead. Duplicates are
 //! hard-linked after their canonical file is copied.
+//!
+//! Supports resumable copies via an optional manifest that tracks per-file
+//! completion status. When a manifest is provided, already-completed files
+//! are skipped and the manifest is updated atomically after each file.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -11,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{debug, warn};
 
+use crate::adapters::manifest::CopyManifest;
 use crate::domain::{CopyError, CopyPlan};
 use crate::ports::{ProgressPort, ProgressUpdate};
 
@@ -65,6 +70,24 @@ pub fn execute_copy_plan(
     config: &CopyConfig,
     progress: &dyn ProgressPort,
 ) -> Result<CopyResult, CopyError> {
+    execute_copy_plan_resumable(plan, config, progress, None)
+}
+
+/// Execute a copy plan with optional resume support via a manifest.
+///
+/// When a manifest is provided, already-completed files are skipped and the
+/// manifest is updated atomically after each file is copied or linked.
+///
+/// # Errors
+///
+/// Returns `CopyError::InsufficientSpace` if the destination doesn't have
+/// enough free space. Per-file errors are collected in `CopyResult.errors`.
+pub fn execute_copy_plan_resumable(
+    plan: &CopyPlan,
+    config: &CopyConfig,
+    progress: &dyn ProgressPort,
+    mut manifest: Option<&mut CopyManifest>,
+) -> Result<CopyResult, CopyError> {
     // Pre-flight space check.
     let needed_bytes = estimate_copy_bytes(plan);
     check_free_space(&plan.dest_root, needed_bytes)?;
@@ -75,6 +98,9 @@ pub fn execute_copy_plan(
         bytes_copied: 0,
         errors: Vec::new(),
     };
+
+    // Track how many files were skipped from a previous run.
+    let mut files_skipped: u64 = 0;
 
     let files_total = plan.entries.len() as u64;
     let bytes_total: u64 = plan.entries.iter().map(|e| e.size).sum();
@@ -95,6 +121,17 @@ pub fn execute_copy_plan(
     for (idx, entry) in plan.entries.iter().enumerate() {
         if duplicate_indices.contains(&idx) {
             continue; // Will be hard-linked in phase 2.
+        }
+
+        // Check manifest for already-completed files.
+        let relative = relative_path_str(&entry.path, &plan.source_root);
+        let hash_str = entry.hash.as_ref().map(std::string::ToString::to_string);
+        if let Some(ref manifest) = manifest
+            && manifest.is_completed(&relative, entry.size, hash_str.as_deref())
+        {
+            files_skipped += 1;
+            debug!("skipping already-completed: {relative}");
+            continue;
         }
 
         let dest_path = map_source_to_dest(&entry.path, &plan.source_root, &plan.dest_root);
@@ -124,8 +161,16 @@ pub fn execute_copy_plan(
                     result.files_copied += 1;
                     result.bytes_copied += entry.size;
 
+                    // Update manifest for this file.
+                    if let Some(ref mut m) = manifest {
+                        m.mark_copied(&relative, entry.size, hash_str.as_deref());
+                        if let Err(e) = m.save(&plan.dest_root) {
+                            warn!("failed to update manifest: {e}");
+                        }
+                    }
+
                     progress.update(&ProgressUpdate::CopyProgress {
-                        files_copied: result.files_copied + result.files_linked,
+                        files_copied: result.files_copied + result.files_linked + files_skipped,
                         files_total,
                         bytes_copied: result.bytes_copied,
                         bytes_total,
@@ -150,23 +195,42 @@ pub fn execute_copy_plan(
             bytes_total,
             plan,
         );
+        // Update manifest for small files that were successfully copied.
+        if let Some(ref mut m) = manifest {
+            for &(idx, _, _) in &small_files {
+                if let Some(entry) = plan.entries.get(idx) {
+                    let rel = relative_path_str(&entry.path, &plan.source_root);
+                    let h = entry.hash.as_ref().map(std::string::ToString::to_string);
+                    m.mark_copied(&rel, entry.size, h.as_deref());
+                }
+            }
+            if let Err(e) = m.save(&plan.dest_root) {
+                warn!("failed to update manifest after small files: {e}");
+            }
+        }
     }
 
     // Phase 2: Hard-link duplicates.
-    create_hard_links(plan, &mut result, progress, files_total, bytes_total);
+    create_hard_links_resumable(plan, &mut result, progress, files_total, bytes_total, files_skipped, manifest);
 
     progress.update(&ProgressUpdate::PhaseComplete { phase: "copy" });
+
+    if files_skipped > 0 {
+        debug!("resumed: {files_skipped} files skipped from previous run");
+    }
 
     Ok(result)
 }
 
-/// Create hard links for all duplicate files in the plan.
-fn create_hard_links(
+/// Create hard links for all duplicate files, with optional manifest tracking.
+fn create_hard_links_resumable(
     plan: &CopyPlan,
     result: &mut CopyResult,
     progress: &dyn ProgressPort,
     files_total: u64,
     bytes_total: u64,
+    files_skipped: u64,
+    mut manifest: Option<&mut CopyManifest>,
 ) {
     for group in &plan.dedup_groups {
         let Some(canonical) = plan.entries.get(group.canonical) else {
@@ -179,6 +243,17 @@ fn create_hard_links(
             let Some(dup_entry) = plan.entries.get(dup_idx) else {
                 continue;
             };
+
+            // Check manifest for already-completed links.
+            let relative = relative_path_str(&dup_entry.path, &plan.source_root);
+            let hash_str = dup_entry.hash.as_ref().map(std::string::ToString::to_string);
+            if let Some(ref manifest) = manifest
+                && manifest.is_completed(&relative, dup_entry.size, hash_str.as_deref())
+            {
+                debug!("skipping already-linked: {relative}");
+                continue;
+            }
+
             let dup_dest = map_source_to_dest(&dup_entry.path, &plan.source_root, &plan.dest_root);
 
             // Ensure parent directory exists.
@@ -197,8 +272,16 @@ fn create_hard_links(
             match fs::hard_link(&canonical_dest, &dup_dest) {
                 Ok(()) => {
                     result.files_linked += 1;
+
+                    if let Some(ref mut m) = manifest {
+                        m.mark_linked(&relative, dup_entry.size, hash_str.as_deref());
+                        if let Err(e) = m.save(&plan.dest_root) {
+                            warn!("failed to update manifest: {e}");
+                        }
+                    }
+
                     progress.update(&ProgressUpdate::CopyProgress {
-                        files_copied: result.files_copied + result.files_linked,
+                        files_copied: result.files_copied + result.files_linked + files_skipped,
                         files_total,
                         bytes_copied: result.bytes_copied,
                         bytes_total,
@@ -223,6 +306,14 @@ fn create_hard_links(
 pub fn map_source_to_dest(source_path: &Path, source_root: &Path, dest_root: &Path) -> PathBuf {
     let relative = source_path.strip_prefix(source_root).unwrap_or(source_path);
     dest_root.join(relative)
+}
+
+/// Get the relative path string of a file within a root directory.
+fn relative_path_str(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Estimate how many bytes need to be physically copied (after dedup).
