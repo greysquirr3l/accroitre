@@ -352,8 +352,8 @@ impl SshAdapter {
         key_path: &Path,
         passphrase: Option<&str>,
     ) -> Result<bool, russh::Error> {
-        let key_pair = russh::keys::load_secret_key(key_path, passphrase)
-            .map_err(russh::Error::Keys)?;
+        let key_pair =
+            russh::keys::load_secret_key(key_path, passphrase).map_err(russh::Error::Keys)?;
 
         handle
             .authenticate_publickey(&self.config.user, Arc::new(key_pair))

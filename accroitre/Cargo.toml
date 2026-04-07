@@ -23,6 +23,7 @@ xxhash-rust = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }
 tar = { workspace = true }
+flate2 = { workspace = true }
 russh = { workspace = true }
 russh-keys = { workspace = true }
 

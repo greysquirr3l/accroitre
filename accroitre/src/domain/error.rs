@@ -99,6 +99,13 @@ pub enum CopyError {
         #[source]
         source: std::io::Error,
     },
+
+    #[error("transport error for {path}")]
+    Transport {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Errors that occur during post-copy verification.
