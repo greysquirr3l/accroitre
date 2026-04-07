@@ -18,9 +18,13 @@ accroitre = { path = "../accroitre" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 console = { workspace = true }
+glob = { workspace = true }
 indicatif = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [build-dependencies]
+
+[dev-dependencies]
+tempfile = { workspace = true }

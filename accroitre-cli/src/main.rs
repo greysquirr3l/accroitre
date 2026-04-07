@@ -1,9 +1,11 @@
 //! `accro` — CLI for accroître, a high-speed file copier.
 
+pub mod pipeline;
 pub mod tui;
 
 use std::path::PathBuf;
 
+use accroitre::ports::ProgressPort;
 use clap::{Parser, Subcommand};
 
 /// Accroître — high-speed file copier with deduplication and SSH streaming.
@@ -196,12 +198,12 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Copy(_args)) => {
-            // TODO(T15): wire up orchestrator with actual copy logic
-            eprintln!("Copy command not yet implemented.");
+        Some(Commands::Copy(args)) => {
+            let exit_code = run_copy(&args);
+            std::process::exit(exit_code);
         }
         Some(Commands::Hash(_args)) => {
-            // TODO(T15): wire up hash subcommand
+            // TODO(T17): wire up hash subcommand
             eprintln!("Hash command not yet implemented.");
         }
         Some(Commands::Version) => {
@@ -216,6 +218,80 @@ fn main() {
             println!();
         }
     }
+}
+
+fn run_copy(args: &CopyArgs) -> i32 {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let src_loc = parse_location(&args.source);
+    let dst_loc = parse_location(&args.destination);
+
+    // Only local-to-local is wired in this task.
+    if !matches!((&src_loc, &dst_loc), (Location::Local(_), Location::Local(_))) {
+        eprintln!("Remote transfers are not yet implemented.");
+        return pipeline::EXIT_FAILURE;
+    }
+
+    let quiet = args.quiet;
+    let tui = tui::TuiProgress::new(quiet);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancelled_for_handler = Arc::clone(&cancelled);
+
+    // Install Ctrl-C handler.
+    ctrlc_handler(cancelled_for_handler);
+
+    let thread_count = args.threads.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(4)
+    });
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(thread_count)
+        .enable_all()
+        .build();
+
+    let rt = match rt {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Failed to start runtime: {e}");
+            return pipeline::EXIT_FAILURE;
+        }
+    };
+
+    let result = rt.block_on(pipeline::run_local_pipeline(args, &tui, Arc::clone(&cancelled)));
+
+    // Always finish the TUI (prints summary).
+    tui.finish();
+
+    match result {
+        Ok(pipeline_result) => {
+            if pipeline_result.cancelled {
+                eprintln!("Operation cancelled by user.");
+            }
+            pipeline_result.exit_code()
+        }
+        Err(e) => {
+            eprintln!("Fatal error: {e:#}");
+            pipeline::EXIT_FAILURE
+        }
+    }
+}
+
+fn ctrlc_handler(cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    let _ = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        if let Ok(rt) = rt {
+            let _ = rt.block_on(async {
+                tokio::signal::ctrl_c().await
+            });
+            cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+            eprintln!("\nInterrupted — finishing current operation…");
+        }
+    });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
