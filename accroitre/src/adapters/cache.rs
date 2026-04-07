@@ -231,6 +231,58 @@ impl SqliteCache {
 
         Ok(())
     }
+
+    /// Return all file paths stored in the cache.
+    ///
+    /// Used by delta sync to detect orphaned destination files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on database query failures.
+    pub fn list_all_paths(&self) -> Result<Vec<String>, CacheError> {
+        if !self.enabled {
+            return Ok(Vec::new());
+        }
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CacheError::Lock)?;
+
+        let mut stmt = conn
+            .prepare("SELECT path FROM files")
+            .map_err(|e| CacheError::Query { source: e })?;
+
+        let paths = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| CacheError::Query { source: e })?
+            .filter_map(Result::ok)
+            .collect();
+
+        Ok(paths)
+    }
+
+    /// Remove a cache entry by path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on database write failures.
+    pub fn remove(&self, path: &Path) -> Result<(), CacheError> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CacheError::Lock)?;
+
+        let path_str = path.to_string_lossy();
+        conn.execute("DELETE FROM files WHERE path = ?1", params![path_str.as_ref()])
+            .map_err(|e| CacheError::Write { source: e })?;
+
+        Ok(())
+    }
 }
 
 /// Encode a `Hash` to `(bytes, algorithm_name)` for storage.

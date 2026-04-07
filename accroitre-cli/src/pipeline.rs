@@ -1,17 +1,20 @@
 //! Pipeline — wires CLI arguments to engine stages and runs the full copy flow.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use accroitre::adapters::log::JsonLog;
 use accroitre::adapters::manifest::CopyManifest;
 use accroitre::domain::HashAlgorithm;
-use accroitre::engine::copy::{execute_copy_plan, execute_copy_plan_resumable, CopyConfig, CopyResult};
-use accroitre::engine::dedup::{build_dedup_plan, DedupStats};
+use accroitre::engine::copy::{
+    CopyConfig, CopyResult, execute_copy_plan, execute_copy_plan_resumable,
+};
+use accroitre::engine::dedup::{DedupStats, build_dedup_plan};
+use accroitre::engine::delta;
 use accroitre::engine::hash::HashConfig;
-use accroitre::engine::scan::{scan_tree, ScanConfig};
-use accroitre::engine::verify::{verify_plan, VerifyConfig, VerifyResult};
+use accroitre::engine::scan::{ScanConfig, scan_tree};
+use accroitre::engine::verify::{VerifyConfig, VerifyResult, verify_plan};
 use accroitre::ports::ProgressPort;
 use anyhow::{Context, Result, bail};
 use glob::Pattern;
@@ -47,10 +50,7 @@ impl PipelineResult {
             return EXIT_PARTIAL;
         }
         let copy_errors = self.copy_result.errors.len();
-        let verify_failures = self
-            .verify_result
-            .as_ref()
-            .map_or(0, |v| v.failures.len());
+        let verify_failures = self.verify_result.as_ref().map_or(0, |v| v.failures.len());
         if copy_errors > 0 || verify_failures > 0 {
             EXIT_PARTIAL
         } else {
@@ -96,9 +96,52 @@ pub async fn run_local_pipeline(
         return Ok(cancelled_result());
     }
 
-    // 2. Hash + Dedup
-    let (plan, dedup_stats) =
-        run_dedup(args, scan_result, &source, &destination, algorithm, buffer_size, tui);
+    // 2. Delta sync — filter to only new/changed files.
+    let (scan_entries, scan_errors) = {
+        let all_entries = scan_result.entries;
+        let errors = scan_result.errors;
+
+        if args.force {
+            // --force: skip delta comparison, copy everything.
+            (all_entries, errors)
+        } else {
+            let delta_result = delta::compute_delta(all_entries, &source, &destination);
+            if delta_result.unchanged_count > 0 {
+                debug!(
+                    "delta: skipping {} unchanged files",
+                    delta_result.unchanged_count
+                );
+            }
+            (delta_result.changed, errors)
+        }
+    };
+
+    // 2b. Delete orphaned destination files if --delete.
+    if args.delete {
+        let re_scan = run_scan(&source, Vec::new(), tui).await?;
+        let orphans = delta::find_orphans(&re_scan.entries, &source, &destination);
+        let deleted = delta::delete_orphans(&orphans);
+        debug!("deleted {deleted} orphaned files at destination");
+    }
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(cancelled_result());
+    }
+
+    // 3. Hash + Dedup
+    let scan_for_dedup = accroitre::engine::scan::ScanResult {
+        entries: scan_entries,
+        errors: scan_errors,
+    };
+    let (plan, dedup_stats) = run_dedup(
+        args,
+        scan_for_dedup,
+        &source,
+        &destination,
+        algorithm,
+        buffer_size,
+        tui,
+    );
 
     if cancelled.load(Ordering::Relaxed) {
         return Ok(cancelled_result());
@@ -123,7 +166,12 @@ pub async fn run_local_pipeline(
     }
 
     if cancelled.load(Ordering::Relaxed) {
-        return Ok(PipelineResult { copy_result, dedup_stats, verify_result: None, cancelled: true });
+        return Ok(PipelineResult {
+            copy_result,
+            dedup_stats,
+            verify_result: None,
+            cancelled: true,
+        });
     }
 
     // 6. Verify
@@ -135,8 +183,7 @@ pub async fn run_local_pipeline(
         debug!("failed to save manifest after verify: {e}");
     }
 
-    if copy_result.errors.is_empty()
-        && verify_result.as_ref().is_none_or(|v| v.failures.is_empty())
+    if copy_result.errors.is_empty() && verify_result.as_ref().is_none_or(|v| v.failures.is_empty())
     {
         let _ = CopyManifest::remove(&destination);
     }
@@ -206,10 +253,8 @@ fn run_dedup(
     };
 
     if args.no_dedup {
-        let mut plan = accroitre::domain::CopyPlan::new(
-            source.to_path_buf(),
-            destination.to_path_buf(),
-        );
+        let mut plan =
+            accroitre::domain::CopyPlan::new(source.to_path_buf(), destination.to_path_buf());
         plan.entries = scan_result.entries;
         let file_count: u64 = plan.entries.len().try_into().unwrap_or(u64::MAX);
         let stats = DedupStats {
@@ -220,13 +265,8 @@ fn run_dedup(
         };
         (plan, stats)
     } else {
-        let (plan, stats) = build_dedup_plan(
-            scan_result.entries,
-            source,
-            destination,
-            &hash_config,
-            tui,
-        );
+        let (plan, stats) =
+            build_dedup_plan(scan_result.entries, source, destination, &hash_config, tui);
         tui.update(&accroitre::ports::ProgressUpdate::PhaseComplete { phase: "hash" });
         (plan, stats)
     }
@@ -265,11 +305,9 @@ fn run_copy(
         try_clonefile: true,
     };
     let result = if let Some(m) = manifest {
-        execute_copy_plan_resumable(plan, &copy_config, tui, Some(m))
-            .context("copy failed")?
+        execute_copy_plan_resumable(plan, &copy_config, tui, Some(m)).context("copy failed")?
     } else {
-        execute_copy_plan(plan, &copy_config, tui)
-            .context("copy failed")?
+        execute_copy_plan(plan, &copy_config, tui).context("copy failed")?
     };
     tui.update(&accroitre::ports::ProgressUpdate::PhaseComplete { phase: "copy" });
     Ok(result)
@@ -309,11 +347,7 @@ fn load_or_create_manifest(
         if let Err(e) = CopyManifest::remove(destination) {
             debug!("failed to remove old manifest on --force: {e}");
         }
-        return CopyManifest::new(
-            source,
-            destination,
-            Some(&algorithm.to_string()),
-        );
+        return CopyManifest::new(source, destination, Some(&algorithm.to_string()));
     }
 
     // Try to load an existing manifest for resuming.
@@ -327,20 +361,12 @@ fn load_or_create_manifest(
         }
         Ok(None) => {
             // No existing manifest — create a new one.
-            CopyManifest::new(
-                source,
-                destination,
-                Some(&algorithm.to_string()),
-            )
+            CopyManifest::new(source, destination, Some(&algorithm.to_string()))
         }
         Err(e) => {
             // Corrupt manifest — warn and start fresh.
             debug!("could not load manifest, starting fresh: {e}");
-            CopyManifest::new(
-                source,
-                destination,
-                Some(&algorithm.to_string()),
-            )
+            CopyManifest::new(source, destination, Some(&algorithm.to_string()))
         }
     }
 }
@@ -401,6 +427,7 @@ mod tests {
             no_cache: false,
             force: false,
             overwrite: false,
+            delete: false,
             exclude: Vec::new(),
             log_file: None,
             quiet: true,
@@ -423,10 +450,7 @@ mod tests {
         fs::write(src.join("hello.txt"), "hello world").unwrap();
         fs::write(src.join("data.bin"), vec![42u8; 1024]).unwrap();
 
-        let args = make_copy_args(
-            src.to_str().unwrap(),
-            dst.to_str().unwrap(),
-        );
+        let args = make_copy_args(src.to_str().unwrap(), dst.to_str().unwrap());
         let tui = TuiProgress::new(true);
         let cancelled = Arc::new(AtomicBool::new(false));
 
@@ -436,7 +460,10 @@ mod tests {
         assert!(result.copy_result.errors.is_empty());
         assert!(dst.join("hello.txt").exists());
         assert!(dst.join("data.bin").exists());
-        assert_eq!(fs::read_to_string(dst.join("hello.txt")).unwrap(), "hello world");
+        assert_eq!(
+            fs::read_to_string(dst.join("hello.txt")).unwrap(),
+            "hello world"
+        );
     }
 
     #[tokio::test]
@@ -447,10 +474,7 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("file.txt"), "content").unwrap();
 
-        let mut args = make_copy_args(
-            src.to_str().unwrap(),
-            dst.to_str().unwrap(),
-        );
+        let mut args = make_copy_args(src.to_str().unwrap(), dst.to_str().unwrap());
         args.dry_run = true;
 
         let tui = TuiProgress::new(true);

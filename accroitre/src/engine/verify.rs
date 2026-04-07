@@ -221,6 +221,7 @@ mod tests {
                 hash: Some(hash),
                 physical_offset: None,
                 permissions: 0,
+                modified_epoch: None,
             }],
             dedup_groups: vec![],
         };
@@ -255,6 +256,7 @@ mod tests {
                 hash: Some(hash),
                 physical_offset: None,
                 permissions: 0,
+                modified_epoch: None,
             }],
             dedup_groups: vec![],
         };
@@ -297,6 +299,7 @@ mod tests {
                     hash: Some(hash.clone()),
                     physical_offset: None,
                     permissions: 0,
+                    modified_epoch: None,
                 },
                 FileEntry {
                     path: src_b,
@@ -304,6 +307,7 @@ mod tests {
                     hash: Some(hash),
                     physical_offset: None,
                     permissions: 0,
+                    modified_epoch: None,
                 },
             ],
             dedup_groups: vec![DedupGroup {

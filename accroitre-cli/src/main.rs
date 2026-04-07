@@ -77,6 +77,10 @@ pub struct CopyArgs {
     #[arg(long)]
     pub overwrite: bool,
 
+    /// Delete destination files not present in source (sync mode).
+    #[arg(long)]
+    pub delete: bool,
+
     /// Exclude paths matching the given glob (repeatable).
     #[arg(long, value_name = "PATTERN")]
     pub exclude: Vec<String>,
@@ -368,6 +372,7 @@ mod tests {
             assert!(!args.no_cache);
             assert!(!args.force);
             assert!(!args.overwrite);
+            assert!(!args.delete);
             assert!(args.exclude.is_empty());
             assert!(args.log_file.is_none());
             assert!(!args.quiet);
@@ -394,6 +399,7 @@ mod tests {
             "--no-cache",
             "--force",
             "--overwrite",
+            "--delete",
             "--exclude",
             "*.log",
             "--exclude",
@@ -428,6 +434,7 @@ mod tests {
             assert!(args.no_cache);
             assert!(args.force);
             assert!(args.overwrite);
+            assert!(args.delete);
             assert_eq!(args.exclude, vec!["*.log", "tmp/**"]);
             assert_eq!(args.log_file, Some(PathBuf::from("run.log")));
             assert!(args.quiet);

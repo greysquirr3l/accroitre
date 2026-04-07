@@ -128,8 +128,14 @@ pub async fn scan_tree(
                 dirs_to_visit.push(path);
             } else if metadata.is_file() {
                 let permissions = get_permissions(&metadata);
+                let modified_epoch = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
                 let mut entry = FileEntry::new(path, metadata.len());
                 entry.permissions = permissions;
+                entry.modified_epoch = modified_epoch;
                 entries.push(entry);
 
                 progress.update(&ProgressUpdate::ScanProgress {

@@ -92,6 +92,8 @@ pub struct FileEntry {
     pub physical_offset: Option<u64>,
     /// POSIX permission bits (0 on platforms without POSIX permissions).
     pub permissions: u32,
+    /// Modification time as seconds since the Unix epoch.
+    pub modified_epoch: Option<u64>,
 }
 
 impl FileEntry {
@@ -104,6 +106,7 @@ impl FileEntry {
             hash: None,
             physical_offset: None,
             permissions: 0,
+            modified_epoch: None,
         }
     }
 }
@@ -273,6 +276,7 @@ mod tests {
             hash: Some(Hash::XxHash128([0xAA; 16])),
             physical_offset: Some(0),
             permissions: 0o644,
+            modified_epoch: None,
         });
         plan.entries.push(FileEntry {
             path: PathBuf::from("/src/b.txt"),
@@ -280,6 +284,7 @@ mod tests {
             hash: Some(Hash::XxHash128([0xAA; 16])),
             physical_offset: Some(1024),
             permissions: 0o644,
+            modified_epoch: None,
         });
         plan.entries.push(FileEntry {
             path: PathBuf::from("/src/c.txt"),
@@ -287,6 +292,7 @@ mod tests {
             hash: Some(Hash::XxHash128([0xBB; 16])),
             physical_offset: Some(2048),
             permissions: 0o755,
+            modified_epoch: None,
         });
 
         plan.dedup_groups.push(DedupGroup {
