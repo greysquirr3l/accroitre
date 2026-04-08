@@ -1,10 +1,6 @@
 //! Core domain types — pure data structures with no I/O dependencies.
 
-use std::{
-    fmt,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{fmt, path::PathBuf, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -53,14 +49,12 @@ impl Hash {
     /// Returns the hex-encoded string for this hash.
     #[must_use]
     pub fn to_hex(&self) -> String {
-        self.as_bytes()
-            .iter()
-            .fold(String::new(), |mut acc, byte| {
-                // write_fmt to a String is infallible — it only fails on
-                // Formatter width/precision issues which don't apply here.
-                let _ = fmt::Write::write_fmt(&mut acc, format_args!("{byte:02x}"));
-                acc
-            })
+        self.as_bytes().iter().fold(String::new(), |mut acc, byte| {
+            // write_fmt to a String is infallible — it only fails on
+            // Formatter width/precision issues which don't apply here.
+            let _ = fmt::Write::write_fmt(&mut acc, format_args!("{byte:02x}"));
+            acc
+        })
     }
 }
 
@@ -209,7 +203,12 @@ impl CopyStats {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod tests {
     use super::*;
 
@@ -312,10 +311,7 @@ mod tests {
         assert_eq!(TransferMode::LocalToLocal.to_string(), "local → local");
         assert_eq!(TransferMode::LocalToRemote.to_string(), "local → remote");
         assert_eq!(TransferMode::RemoteToLocal.to_string(), "remote → local");
-        assert_eq!(
-            TransferMode::RemoteToRemote.to_string(),
-            "remote → remote"
-        );
+        assert_eq!(TransferMode::RemoteToRemote.to_string(), "remote → remote");
     }
 
     #[test]
