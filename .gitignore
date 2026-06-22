@@ -1,5 +1,4 @@
 /target
-.cargo/
 tasks/
 .vscode/
 .coraline/
@@ -9,5 +8,6 @@ tasks/
 IMPLEMENTATION_PLAN.md
 plan.toml
 PROGRESS.md
+docs/dev/
 
 rust-catchup-1.78-1.94.1.md
