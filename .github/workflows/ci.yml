@@ -10,23 +10,34 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
+permissions:
+  contents: read
+
 jobs:
-  check:
-    name: ${{ matrix.os }}
+  verify:
+    name: verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            audit: true
+          - os: macos-latest
+            audit: false
+          - os: windows-latest
+            audit: false
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.96.0"
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -35,7 +46,49 @@ jobs:
         run: cargo l
 
       - name: Build
-        run: cargo build --workspace
+        run: cargo build --workspace --all-features
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
+
+      - name: Audit dependencies
+        if: matrix.audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  msrv:
+    name: msrv (1.96.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check MSRV
+        run: cargo check --workspace --all-features
