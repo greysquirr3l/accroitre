@@ -100,8 +100,11 @@ pub enum CopyError {
         source: std::io::Error,
     },
 
-    #[error("transport error for {path}")]
+    #[error("transport error: {message} ({path})")]
     Transport {
+        /// Human-readable description of which transport step failed.
+        message: String,
+        /// Path of the file being transferred when the error occurred (best-effort).
         path: PathBuf,
         #[source]
         source: std::io::Error,

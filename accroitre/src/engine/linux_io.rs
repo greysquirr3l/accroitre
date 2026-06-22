@@ -10,7 +10,7 @@
 use std::fs;
 use std::io;
 use std::os::fd::AsRawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tracing::debug;
 
@@ -195,7 +195,8 @@ pub fn try_splice(src_fd: i32, dest_fd: i32, len: u64) -> Result<bool, CopyError
     let ret = unsafe { libc::pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) };
     if ret < 0 {
         return Err(CopyError::Transport {
-            message: "failed to create pipe".to_owned(),
+            message: "pipe2() syscall failed".to_owned(),
+            path: PathBuf::new(),
             source: io::Error::last_os_error(),
         });
     }
@@ -246,7 +247,8 @@ fn splice_loop(
             return match err.raw_os_error() {
                 Some(libc::ENOSYS | libc::EINVAL) => Ok(false),
                 _ => Err(CopyError::Transport {
-                    message: "splice to pipe failed".to_owned(),
+                    message: "splice(src → pipe) failed".to_owned(),
+                    path: PathBuf::new(),
                     source: err,
                 }),
             };
@@ -273,7 +275,8 @@ fn splice_loop(
 
             if from_pipe < 0 {
                 return Err(CopyError::Transport {
-                    message: "splice from pipe failed".to_owned(),
+                    message: "splice(pipe → dst) failed".to_owned(),
+                    path: PathBuf::new(),
                     source: io::Error::last_os_error(),
                 });
             }

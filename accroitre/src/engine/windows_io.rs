@@ -9,14 +9,14 @@ use std::path::{Path, PathBuf};
 
 use tracing::{debug, warn};
 use windows_sys::Win32::Foundation::{
-    BOOL, CloseHandle, ERROR_INVALID_FUNCTION, FALSE, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
-    TRUE,
+    CloseHandle, ERROR_INVALID_FUNCTION, FALSE, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, CREATE_ALWAYS, CopyFileExW, CreateFileW, DeviceIoControl,
-    FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ,
-    GetFileInformationByHandle, GetVolumeInformationByHandleW, OPEN_EXISTING, SetFilePointerEx,
+    BY_HANDLE_FILE_INFORMATION, CREATE_ALWAYS, CopyFileExW, CreateFileW, FILE_ATTRIBUTE_NORMAL,
+    FILE_BEGIN, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ, GetFileInformationByHandle,
+    GetVolumeInformationByHandleW, OPEN_EXISTING, SetFilePointerEx,
 };
+use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::{
     FSCTL_DUPLICATE_EXTENTS_TO_FILE, FSCTL_GET_RETRIEVAL_POINTERS,
 };

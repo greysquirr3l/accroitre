@@ -153,6 +153,7 @@ pub async fn upload_tar_stream(
     if let Err(e) = adapter.exec_command(&mkdir_cmd).await {
         warn!("failed to create remote directory: {e}");
         return Err(CopyError::Transport {
+            message: "mkdir remote destination failed".to_owned(),
             path: PathBuf::from(remote_dest),
             source: std::io::Error::other(format!("mkdir failed: {e}")),
         });
@@ -194,6 +195,7 @@ pub async fn upload_tar_stream(
         // Optionally compress.
         let send_data = if config.compress {
             compress_gzip(&archive_data).map_err(|e| CopyError::Transport {
+                message: "gzip compression of tar archive failed".to_owned(),
                 path: source_root.to_path_buf(),
                 source: e,
             })?
@@ -216,6 +218,7 @@ pub async fn upload_tar_stream(
             Err(e) => {
                 warn!("batch {}: SSH upload failed: {e}", batch_idx + 1);
                 result.errors.push(CopyError::Transport {
+                    message: format!("SSH upload of batch {} failed", batch_idx + 1),
                     path: PathBuf::from(remote_dest),
                     source: std::io::Error::other(format!("SSH upload failed: {e}")),
                 });
@@ -267,6 +270,7 @@ pub async fn download_tar_stream(
 
     // Ensure local destination exists.
     std::fs::create_dir_all(local_dest).map_err(|e| CopyError::Transport {
+        message: "creating local destination directory failed".to_owned(),
         path: local_dest.to_path_buf(),
         source: e,
     })?;
@@ -312,6 +316,10 @@ pub async fn download_tar_stream(
                         Err(e) => {
                             warn!("batch {}: gzip decompression failed: {e}", batch_idx + 1);
                             result.errors.push(CopyError::Transport {
+                                message: format!(
+                                    "gzip decompression of batch {} failed",
+                                    batch_idx + 1
+                                ),
                                 path: local_dest.to_path_buf(),
                                 source: e,
                             });
@@ -342,6 +350,7 @@ pub async fn download_tar_stream(
             Err(e) => {
                 warn!("batch {}: SSH download failed: {e}", batch_idx + 1);
                 result.errors.push(CopyError::Transport {
+                    message: format!("SSH download of batch {} failed", batch_idx + 1),
                     path: local_dest.to_path_buf(),
                     source: std::io::Error::other(format!("SSH download failed: {e}")),
                 });
@@ -394,6 +403,7 @@ pub async fn relay_tar_stream(
     if let Err(e) = dest_adapter.exec_command(&mkdir_cmd).await {
         warn!("failed to create remote directory: {e}");
         return Err(CopyError::Transport {
+            message: "mkdir remote destination failed".to_owned(),
             path: PathBuf::from(dest_root),
             source: std::io::Error::other(format!("mkdir failed: {e}")),
         });
@@ -435,6 +445,7 @@ pub async fn relay_tar_stream(
             Err(e) => {
                 warn!("batch {}: source download failed: {e}", batch_idx + 1);
                 result.errors.push(CopyError::Transport {
+                    message: format!("relay source download of batch {} failed", batch_idx + 1),
                     path: PathBuf::from(source_root),
                     source: std::io::Error::other(format!("relay source failed: {e}")),
                 });
@@ -457,6 +468,7 @@ pub async fn relay_tar_stream(
             Err(e) => {
                 warn!("batch {}: destination upload failed: {e}", batch_idx + 1);
                 result.errors.push(CopyError::Transport {
+                    message: format!("relay destination upload of batch {} failed", batch_idx + 1),
                     path: PathBuf::from(dest_root),
                     source: std::io::Error::other(format!("relay dest failed: {e}")),
                 });

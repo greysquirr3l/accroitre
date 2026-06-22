@@ -245,6 +245,34 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
 async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
     use std::os::unix::io::AsRawFd;
 
+    // FIEMAP ioctl constants from <linux/fs.h>.
+    // libc 0.2 doesn't expose `fiemap`/`fiemap_extent` types or the `FS_IOC_FIEMAP`
+    // constant, so we define the struct layout here (matches the Linux kernel ABI
+    // since 2.6.28) and use the ioctl number directly via `_IOWR('f', 11, ...)`.
+    #[repr(C)]
+    #[derive(Default)]
+    struct FiemapExtent {
+        fe_physical: u64,
+        fe_logical: u64,
+        fe_length: u64,
+        fe_reserved64: [u64; 2],
+        fe_flags: u32,
+        fe_reserved: [u32; 3],
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct Fiemap {
+        fm_start: u64,
+        fm_length: u64,
+        fm_flags: u32,
+        fm_mapped_extents: u32,
+        fm_extent_count: u32,
+        fm_reserved: u32,
+        fm_extents: [FiemapExtent; 0],
+    }
+    // _IOWR('f', 11, sizeof(struct fiemap)) on 64-bit Linux.
+    const FS_IOC_FIEMAP: libc::c_ulong = 3_223_348_747;
+
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let file = std::fs::File::open(&path).map_err(|e| ScanError::PhysicalOffset {
@@ -252,28 +280,28 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
             source: e,
         })?;
 
-        // Use FIEMAP ioctl to get the physical extent offset of the first extent.
-        // SAFETY: We allocate a properly sized buffer for the fiemap struct + 1 extent,
-        // zero-initialize it, and pass valid fd/pointer to ioctl.
-        let mut buf =
-            [0u8; std::mem::size_of::<libc::fiemap>() + std::mem::size_of::<libc::fiemap_extent>()];
-        let fiemap = buf.as_mut_ptr().cast::<libc::fiemap>();
-        unsafe {
-            (*fiemap).fm_start = 0;
-            (*fiemap).fm_length = u64::MAX;
-            (*fiemap).fm_flags = 0;
-            (*fiemap).fm_extent_count = 1;
-        }
-
-        let ret = unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_FIEMAP, fiemap) };
+        // SAFETY: We allocate a buffer that holds a `Fiemap` followed by space for
+        // one `FiemapExtent`, zero-initialize it, and pass a valid fd and a
+        // properly-aligned pointer to ioctl. The kernel writes up to
+        // `fm_extent_count` extents into the trailing region.
+        let mut fm: Fiemap = Fiemap {
+            fm_start: 0,
+            fm_length: u64::MAX,
+            fm_flags: 0,
+            fm_extent_count: 1,
+            ..Default::default()
+        };
+        let fm_ptr = std::ptr::addr_of_mut!(fm).cast::<libc::c_void>();
+        let ret = unsafe { libc::ioctl(file.as_raw_fd(), FS_IOC_FIEMAP, fm_ptr) };
         if ret == -1 {
             return Ok(None);
         }
 
-        let mapped_extents = unsafe { (*fiemap).fm_mapped_extents };
-        if mapped_extents > 0 {
-            let extents_ptr = unsafe { fiemap.add(1).cast::<libc::fiemap_extent>() };
-            let physical = unsafe { (*extents_ptr).fe_physical };
+        if fm.fm_mapped_extents > 0 {
+            // SAFETY: The kernel has populated up to `fm_extent_count` extents
+            // immediately after the `Fiemap` header in our buffer.
+            let extent_ptr = unsafe { std::ptr::addr_of!(fm.fm_extents).cast::<FiemapExtent>() };
+            let physical = unsafe { (*extent_ptr).fe_physical };
             Ok(Some(physical))
         } else {
             Ok(None)
