@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use accroitre::adapters::lock::DestLock;
 use accroitre::adapters::log::JsonLog;
 use accroitre::adapters::manifest::CopyManifest;
 use accroitre::domain::HashAlgorithm;
@@ -79,10 +80,18 @@ pub async fn run_local_pipeline(
         bail!("source path does not exist: {}", source.display());
     }
 
+    // Ensure destination root exists so the lock file can be placed inside it.
+    std::fs::create_dir_all(&destination)
+        .with_context(|| format!("cannot create destination: {}", destination.display()))?;
+
+    // Acquire exclusive lock on destination to prevent concurrent `accro`
+    // runs from corrupting the manifest/cache. Released on drop at end of run.
+    let _dest_lock = DestLock::acquire(&destination)
+        .with_context(|| format!("cannot lock destination: {}", destination.display()))?;
+
     let exclude_patterns = parse_excludes(&args.exclude)?;
     let json_log = open_json_log(args, &source, &destination)?;
 
-    #[allow(clippy::cast_possible_truncation)]
     let buffer_size = args.buffer as usize * 1024 * 1024;
     let algorithm = HashAlgorithm::XxHash128;
 
@@ -411,7 +420,6 @@ fn log_copy_results(log: &JsonLog, result: &CopyResult, plan: &accroitre::domain
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use std::fs;
@@ -443,47 +451,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn end_to_end_local_copy() {
-        let tmp = tempfile::tempdir().unwrap();
+    async fn end_to_end_local_copy() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("hello.txt"), "hello world").unwrap();
-        fs::write(src.join("data.bin"), vec![42u8; 1024]).unwrap();
+        fs::create_dir_all(&src)?;
+        fs::write(src.join("hello.txt"), "hello world")?;
+        fs::write(src.join("data.bin"), vec![42u8; 1024])?;
 
-        let args = make_copy_args(src.to_str().unwrap(), dst.to_str().unwrap());
+        let src_str = src.to_str().ok_or("non-utf8 src")?;
+        let dst_str = dst.to_str().ok_or("non-utf8 dst")?;
+        let args = make_copy_args(src_str, dst_str);
         let tui = TuiProgress::new(true);
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        let result = run_local_pipeline(&args, &tui, cancelled).await.unwrap();
+        let result = run_local_pipeline(&args, &tui, cancelled).await?;
         assert!(!result.cancelled);
         assert_eq!(result.exit_code(), EXIT_SUCCESS);
         assert!(result.copy_result.errors.is_empty());
         assert!(dst.join("hello.txt").exists());
         assert!(dst.join("data.bin").exists());
-        assert_eq!(
-            fs::read_to_string(dst.join("hello.txt")).unwrap(),
-            "hello world"
-        );
+        assert_eq!(fs::read_to_string(dst.join("hello.txt"))?, "hello world");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn dry_run_does_not_copy() {
-        let tmp = tempfile::tempdir().unwrap();
+    async fn dry_run_does_not_copy() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("file.txt"), "content").unwrap();
+        fs::create_dir_all(&src)?;
+        fs::write(src.join("file.txt"), "content")?;
 
-        let mut args = make_copy_args(src.to_str().unwrap(), dst.to_str().unwrap());
+        let src_str = src.to_str().ok_or("non-utf8 src")?;
+        let dst_str = dst.to_str().ok_or("non-utf8 dst")?;
+        let mut args = make_copy_args(src_str, dst_str);
         args.dry_run = true;
 
         let tui = TuiProgress::new(true);
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        let result = run_local_pipeline(&args, &tui, cancelled).await.unwrap();
+        let result = run_local_pipeline(&args, &tui, cancelled).await?;
         assert_eq!(result.copy_result.files_copied, 0);
-        assert!(!dst.exists());
+        // Destination directory exists (we created it to place the lock file)
+        // but no file was copied.
+        assert!(dst.exists());
+        assert!(!dst.join("file.txt").exists());
+        Ok(())
     }
 
     #[tokio::test]
