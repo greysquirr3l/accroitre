@@ -56,11 +56,13 @@ pub fn try_copy_file_range(src: &Path, dest: &Path) -> Result<bool, CopyError> {
     let mut remaining = file_size;
 
     while remaining > 0 {
-        let chunk = if remaining > CFR_CHUNK_SIZE as u64 {
-            CFR_CHUNK_SIZE
-        } else {
-            remaining as usize
-        };
+        let chunk = usize::try_from(remaining.min(CFR_CHUNK_SIZE as u64)).map_err(|e| {
+            CopyError::FileCopy {
+                src: src.to_path_buf(),
+                dst: dest.to_path_buf(),
+                source: io::Error::other(e),
+            }
+        })?;
 
         // SAFETY: `copy_file_range` is a Linux syscall. We pass valid file
         // descriptors and properly initialised offset pointers.
@@ -150,11 +152,13 @@ pub fn try_sendfile(src: &Path, dest_fd: i32) -> Result<Option<u64>, CopyError> 
 
     while total_sent < file_size {
         let remaining = file_size - total_sent;
-        let chunk = if remaining > SENDFILE_CHUNK_SIZE as u64 {
-            SENDFILE_CHUNK_SIZE
-        } else {
-            remaining as usize
-        };
+        let chunk = usize::try_from(remaining.min(SENDFILE_CHUNK_SIZE as u64)).map_err(|e| {
+            CopyError::FileCopy {
+                src: src.to_path_buf(),
+                dst: Path::new("<socket>").to_path_buf(),
+                source: io::Error::other(e),
+            }
+        })?;
 
         // SAFETY: `sendfile` is a Linux syscall. We pass valid file
         // descriptors and a properly initialised offset pointer.
@@ -229,7 +233,7 @@ pub fn try_splice(src_fd: i32, dest_fd: i32, len: u64) -> Result<bool, CopyError
     result
 }
 
-/// Inner splice loop between src_fd → pipe → dest_fd.
+/// Inner splice loop between `src_fd` → pipe → `dest_fd`.
 fn splice_loop(
     src_fd: i32,
     dest_fd: i32,
@@ -335,7 +339,7 @@ fn splice_loop(
 
 /// Detect the running kernel version and return `(major, minor)`.
 ///
-/// Used for runtime capability detection (e.g., io_uring requires 5.1+).
+/// Used for runtime capability detection (e.g., `io_uring` requires 5.1+).
 #[must_use]
 pub fn kernel_version() -> Option<(u32, u32)> {
     // SAFETY: uname writes into a stack-allocated struct. We check return.
@@ -360,7 +364,7 @@ fn parse_kernel_version(release: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
-/// Check whether io_uring is likely supported (kernel >= 5.1).
+/// Check whether `io_uring` is likely supported (kernel >= 5.1).
 #[must_use]
 pub fn io_uring_supported() -> bool {
     kernel_version().is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 1))

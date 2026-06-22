@@ -434,7 +434,12 @@ fn get_available_space(path: &Path) -> Result<u64, io::Error> {
         let mut stat: libc::statvfs = std::mem::zeroed();
         if libc::statvfs(c_path.as_ptr(), &raw mut stat) == 0 {
             // f_bavail * f_frsize = bytes available to non-root users.
-            Ok(u64::from(stat.f_bavail) * stat.f_frsize)
+            // Field widths differ between Linux (both `u64`) and macOS
+            // (f_bavail `u32`, f_frsize `u64`), so use `u128` as a
+            // width-neutral intermediate that compiles cleanly under
+            // `clippy::pedantic` on every supported target.
+            let result = u128::from(stat.f_bavail) * u128::from(stat.f_frsize);
+            u64::try_from(result).map_err(|e| io::Error::other(format!("statvfs overflow: {e}")))
         } else {
             Err(io::Error::last_os_error())
         }
@@ -467,7 +472,10 @@ fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), C
 
     // On Linux, try copy_file_range (kernel-to-kernel zero-copy).
     #[cfg(target_os = "linux")]
-    if let Ok(true) = super::linux_io::try_copy_file_range(src, dest) {
+    if matches!(
+        super::linux_io::try_copy_file_range(src, dest),
+        Ok(true)
+    ) {
         return Ok(());
     }
 
