@@ -177,7 +177,7 @@ fn get_permissions(metadata: &std::fs::Metadata) -> u32 {
 }
 
 #[cfg(not(unix))]
-fn get_permissions(_metadata: &std::fs::Metadata) -> u32 {
+const fn get_permissions(_metadata: &std::fs::Metadata) -> u32 {
     0
 }
 

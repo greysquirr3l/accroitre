@@ -1,8 +1,8 @@
 //! Windows-specific I/O optimizations.
 //!
-//! Provides long-path support (\\\\?\\ prefix), `FSCTL_GET_RETRIEVAL_POINTERS`
+//! Provides long-path support (`\\?\` prefix), `FSCTL_GET_RETRIEVAL_POINTERS`
 //! for physical offset resolution on NTFS, `FSCTL_DUPLICATE_EXTENTS_TO_FILE`
-//! for block cloning on ReFS, and `CopyFileExW` for kernel-optimized copies.
+//! for block cloning on `ReFS`, and `CopyFileExW` for kernel-optimized copies.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -26,7 +26,7 @@ const MAX_SHORT_PATH: usize = 260;
 
 /// Apply the Windows long-path prefix (`\\?\`) if the path exceeds 260 characters.
 ///
-/// Returns the path unchanged if it's short enough or already prefixed.
+/// Returns the path unchanged if it is short enough or already prefixed.
 #[must_use]
 pub fn ensure_long_path(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
@@ -37,10 +37,9 @@ pub fn ensure_long_path(path: &Path) -> PathBuf {
     }
 
     // UNC paths: \\server\share → \\?\UNC\server\share.
-    if s.starts_with("\\\\") {
+    if let Some(after_unc) = s.strip_prefix("\\\\") {
         if s.len() > MAX_SHORT_PATH {
-            let without_leading = &s[2..];
-            return PathBuf::from(format!("\\\\?\\UNC\\{without_leading}"));
+            return PathBuf::from(format!("\\\\?\\UNC\\{after_unc}"));
         }
         return path.to_path_buf();
     }
@@ -112,6 +111,33 @@ impl Drop for WinHandle {
     }
 }
 
+/// Input buffer for `FSCTL_GET_RETRIEVAL_POINTERS` — start from VCN 0.
+#[repr(C)]
+struct StartingVcnInput {
+    starting_vcn: i64,
+}
+
+/// Output buffer for `FSCTL_GET_RETRIEVAL_POINTERS` — header + first extent.
+#[repr(C)]
+struct RetrievalPointersBuffer {
+    extent_count: u32,
+    padding: u32,
+    starting_vcn: i64,
+    /// Virtual cluster number of the next extent.
+    next_vcn: i64,
+    /// Logical cluster number of the first extent (the physical offset).
+    lcn: i64,
+}
+
+/// Duplicate-extent structure for `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+#[repr(C)]
+struct DuplicateExtentsData {
+    file_handle: HANDLE,
+    source_file_offset: i64,
+    target_file_offset: i64,
+    byte_count: i64,
+}
+
 /// Get the physical disk offset of a file's first cluster on NTFS.
 ///
 /// Uses `FSCTL_GET_RETRIEVAL_POINTERS` to query the volume's cluster map.
@@ -124,26 +150,10 @@ pub fn get_ntfs_physical_offset(path: &Path) -> Result<Option<u64>, io::Error> {
     let handle = open_file(path, true)?;
     let _guard = WinHandle(handle);
 
-    // Input: STARTING_VCN_INPUT_BUFFER — start from VCN 0.
-    #[repr(C)]
-    struct StartingVcnInput {
-        starting_vcn: i64,
-    }
     let input = StartingVcnInput { starting_vcn: 0 };
-
-    // Output: RETRIEVAL_POINTERS_BUFFER header + 1 extent.
-    #[repr(C)]
-    struct RetrievalPointersBuffer {
-        extent_count: u32,
-        _padding: u32,
-        starting_vcn: i64,
-        // First extent.
-        next_vcn: i64,
-        lcn: i64,
-    }
     let mut output = RetrievalPointersBuffer {
         extent_count: 0,
-        _padding: 0,
+        padding: 0,
         starting_vcn: 0,
         next_vcn: 0,
         lcn: 0,
@@ -156,15 +166,11 @@ pub fn get_ntfs_physical_offset(path: &Path) -> Result<Option<u64>, io::Error> {
         DeviceIoControl(
             handle,
             FSCTL_GET_RETRIEVAL_POINTERS,
-            std::ptr::addr_of!(input).cast(),
-            std::mem::size_of::<StartingVcnInput>()
-                .try_into()
-                .unwrap_or(u32::MAX),
-            std::ptr::addr_of_mut!(output).cast(),
-            std::mem::size_of::<RetrievalPointersBuffer>()
-                .try_into()
-                .unwrap_or(u32::MAX),
-            &mut bytes_returned,
+            std::ptr::from_ref(&input).cast(),
+            u32::try_from(std::mem::size_of::<StartingVcnInput>()).unwrap_or(u32::MAX),
+            std::ptr::from_mut(&mut output).cast(),
+            u32::try_from(std::mem::size_of::<RetrievalPointersBuffer>()).unwrap_or(u32::MAX),
+            &raw mut bytes_returned,
             std::ptr::null_mut(),
         )
     };
@@ -185,16 +191,7 @@ pub fn get_ntfs_physical_offset(path: &Path) -> Result<Option<u64>, io::Error> {
     }
 }
 
-/// Duplicate extent structure for `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
-#[repr(C)]
-struct DuplicateExtentsData {
-    file_handle: HANDLE,
-    source_file_offset: i64,
-    target_file_offset: i64,
-    byte_count: i64,
-}
-
-/// Attempt ReFS block cloning via `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+/// Attempt `ReFS` block cloning via `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
 ///
 /// Returns `Ok(true)` if the clone succeeded, `Ok(false)` if the file system
 /// doesn't support block cloning (e.g. NTFS).
@@ -210,7 +207,7 @@ pub fn try_refs_block_clone(src: &Path, dest: &Path) -> Result<bool, io::Error> 
     // Get source file size.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     // SAFETY: `GetFileInformationByHandle` reads file metadata from a valid handle.
-    let ok = unsafe { GetFileInformationByHandle(src_handle, &mut info) };
+    let ok = unsafe { GetFileInformationByHandle(src_handle, &raw mut info) };
     if ok == FALSE {
         return Err(io::Error::last_os_error());
     }
@@ -250,13 +247,11 @@ pub fn try_refs_block_clone(src: &Path, dest: &Path) -> Result<bool, io::Error> 
         DeviceIoControl(
             dest_handle,
             FSCTL_DUPLICATE_EXTENTS_TO_FILE,
-            std::ptr::addr_of!(dup_data).cast(),
-            std::mem::size_of::<DuplicateExtentsData>()
-                .try_into()
-                .unwrap_or(u32::MAX),
+            std::ptr::from_ref(&dup_data).cast(),
+            u32::try_from(std::mem::size_of::<DuplicateExtentsData>()).unwrap_or(u32::MAX),
             std::ptr::null_mut(),
             0,
-            &mut bytes_returned,
+            &raw mut bytes_returned,
             std::ptr::null_mut(),
         )
     };
@@ -312,7 +307,7 @@ pub fn try_copy_file_ex(src: &Path, dest: &Path) -> Result<bool, io::Error> {
 }
 
 /// Try the optimal Windows copy chain:
-/// 1. ReFS block clone (`FSCTL_DUPLICATE_EXTENTS_TO_FILE`)
+/// 1. `ReFS` block clone (`FSCTL_DUPLICATE_EXTENTS_TO_FILE`)
 /// 2. `CopyFileExW` (kernel-optimized)
 /// 3. Return `Ok(false)` for buffered fallback
 ///
@@ -355,7 +350,7 @@ pub fn get_available_space_windows(path: &Path) -> Result<u64, io::Error> {
     let ok = unsafe {
         windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
             wide.as_ptr(),
-            &mut free_bytes_available,
+            &raw mut free_bytes_available,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
         )
@@ -368,7 +363,7 @@ pub fn get_available_space_windows(path: &Path) -> Result<u64, io::Error> {
     }
 }
 
-/// Detect the file system type for a volume (e.g. "NTFS", "ReFS").
+/// Detect the file system type for a volume (e.g. `"NTFS"`, `"ReFS"`).
 ///
 /// Returns `None` if the file system name cannot be determined.
 ///
@@ -392,7 +387,7 @@ pub fn detect_filesystem(path: &Path) -> Result<Option<String>, io::Error> {
             std::ptr::null_mut(), // max component length
             std::ptr::null_mut(), // file system flags
             fs_name.as_mut_ptr(),
-            fs_name.len().try_into().unwrap_or(u32::MAX),
+            u32::try_from(fs_name.len()).unwrap_or(u32::MAX),
         )
     };
 
@@ -405,7 +400,7 @@ pub fn detect_filesystem(path: &Path) -> Result<Option<String>, io::Error> {
         .iter()
         .position(|&c| c == 0)
         .unwrap_or(fs_name.len());
-    let name = String::from_utf16_lossy(&fs_name[..len]);
+    let name = String::from_utf16_lossy(fs_name.get(..len).unwrap_or(&[]));
     if name.is_empty() {
         Ok(None)
     } else {
@@ -474,21 +469,19 @@ mod tests {
     fn detect_filesystem_on_c_drive() {
         // C:\ should be NTFS or ReFS on most Windows systems.
         let result = detect_filesystem(Path::new("C:\\"));
-        match result {
-            Ok(Some(fs)) => {
-                assert!(fs == "NTFS" || fs == "ReFS", "unexpected filesystem: {fs}");
-            }
-            Ok(None) => {} // Can happen in CI environments.
-            Err(_) => {}   // May fail in restricted environments.
+        if let Ok(Some(fs)) = result {
+            assert!(fs == "NTFS" || fs == "ReFS", "unexpected filesystem: {fs}");
         }
+        // Ok(None) can happen in CI environments; Err(_) may fail in
+        // restricted environments — both are acceptable non-assertions.
     }
 
     #[test]
     fn get_available_space_c_drive() {
         let result = get_available_space_windows(Path::new("C:\\"));
-        match result {
-            Ok(space) => assert!(space > 0, "expected non-zero free space"),
-            Err(_) => {} // May fail in CI or containerized environments.
+        if let Ok(space) = result {
+            assert!(space > 0, "expected non-zero free space");
         }
+        // Err(_) is acceptable — may fail in CI or containerized environments.
     }
 }

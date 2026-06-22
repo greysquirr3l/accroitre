@@ -415,15 +415,11 @@ mod tests {
         let data: Vec<u8> = (0..=255).cycle().take(1024 * 1024).collect();
         fs::write(&src, &data)?;
 
-        match try_copy_file_range(&src, &dst)? {
-            true => {
-                let copied = fs::read(&dst)?;
-                assert_eq!(data, copied, "copy_file_range output mismatch");
-            }
-            false => {
-                // Acceptable: kernel/fs doesn't support copy_file_range.
-            }
+        if try_copy_file_range(&src, &dst)? {
+            let copied = fs::read(&dst)?;
+            assert_eq!(data, copied, "copy_file_range output mismatch");
         }
+        // Ok(false) is acceptable: kernel/fs doesn't support copy_file_range.
         Ok(())
     }
 
@@ -435,12 +431,9 @@ mod tests {
 
         fs::write(&src, b"")?;
 
-        match try_copy_file_range(&src, &dst)? {
-            true => {
-                let copied = fs::read(&dst)?;
-                assert!(copied.is_empty());
-            }
-            false => {}
+        if try_copy_file_range(&src, &dst)? {
+            let copied = fs::read(&dst)?;
+            assert!(copied.is_empty());
         }
         Ok(())
     }

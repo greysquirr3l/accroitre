@@ -447,11 +447,11 @@ fn get_available_space(path: &Path) -> Result<u64, io::Error> {
 }
 
 #[cfg(not(unix))]
-fn get_available_space(_path: &Path) -> Result<u64, io::Error> {
+fn get_available_space(path: &Path) -> Result<u64, io::Error> {
     // On Windows, use the windows_io module; on other non-Unix, skip.
     #[cfg(target_os = "windows")]
     {
-        return super::windows_io::get_available_space_windows(_path);
+        super::windows_io::get_available_space_windows(path)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -478,7 +478,10 @@ fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), C
 
     // On Windows, try ReFS block clone → CopyFileExW → buffered copy.
     #[cfg(target_os = "windows")]
-    if let Ok(true) = super::windows_io::try_windows_optimal_copy(src, dest) {
+    if matches!(
+        super::windows_io::try_windows_optimal_copy(src, dest),
+        Ok(true)
+    ) {
         return Ok(());
     }
 
@@ -607,7 +610,7 @@ fn preserve_permissions(src: &Path, dest: &Path, permissions: u32) {
 }
 
 #[cfg(not(unix))]
-fn preserve_permissions(_src: &Path, _dest: &Path, _permissions: u32) {
+const fn preserve_permissions(_src: &Path, _dest: &Path, _permissions: u32) {
     // No-op on non-Unix platforms.
 }
 
