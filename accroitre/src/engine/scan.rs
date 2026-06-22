@@ -301,7 +301,7 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
         if fm.mapped_extents > 0 {
             // SAFETY: The kernel has populated up to `extent_count` extents
             // immediately after the `Fiemap` header in our buffer.
-            let extent_ptr = unsafe { std::ptr::addr_of!(fm.extents).cast::<FiemapExtent>() };
+            let extent_ptr = std::ptr::addr_of!(fm.extents).cast::<FiemapExtent>();
             let physical = unsafe { (*extent_ptr).physical };
             Ok(Some(physical))
         } else {

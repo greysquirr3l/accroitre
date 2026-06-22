@@ -314,10 +314,20 @@ fn splice_loop(
                 break;
             }
 
-            pipe_remaining = pipe_remaining.saturating_sub(u64::try_from(from_pipe)?);
+            let from_pipe_u64 = u64::try_from(from_pipe).map_err(|e| CopyError::Transport {
+                message: "splice byte count overflow".to_owned(),
+                path: PathBuf::new(),
+                source: io::Error::other(e),
+            })?;
+            pipe_remaining = pipe_remaining.saturating_sub(from_pipe_u64);
         }
 
-        remaining = remaining.saturating_sub(u64::try_from(to_pipe)?);
+        let to_pipe_u64 = u64::try_from(to_pipe).map_err(|e| CopyError::Transport {
+            message: "splice byte count overflow".to_owned(),
+            path: PathBuf::new(),
+            source: io::Error::other(e),
+        })?;
+        remaining = remaining.saturating_sub(to_pipe_u64);
     }
 
     Ok(true)
