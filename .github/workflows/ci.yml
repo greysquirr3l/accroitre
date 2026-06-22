@@ -23,7 +23,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.94.1"
+          toolchain: "1.96.0"
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
@@ -32,7 +32,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings -W clippy::pedantic
+        run: cargo l
 
       - name: Build
         run: cargo build --workspace
