@@ -456,13 +456,15 @@ mod tests {
     }
 
     #[test]
-    fn try_windows_optimal_copy_nonexistent_returns_error() {
+    fn try_windows_optimal_copy_nonexistent_returns_false() {
         let result = try_windows_optimal_copy(
             Path::new("C:\\nonexistent\\source.bin"),
             Path::new("C:\\nonexistent\\dest.bin"),
         );
-        // Should fail since source doesn't exist.
-        assert!(result.is_err());
+        // Both ReFS block clone and CopyFileExW swallow per-operation errors
+        // and signal "not supported" by returning Ok(false), letting the
+        // caller fall back to buffered copy. The chain never returns Err.
+        assert!(matches!(result, Ok(false)));
     }
 
     #[test]

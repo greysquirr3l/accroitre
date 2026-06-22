@@ -18,6 +18,13 @@ ignore = [
     # path is exercised only when the user explicitly opts in to SSH
     # remote sources/destinations (not the default local-copy path).
     "RUSTSEC-2026-0153",
+    # RUSTSEC-2026-0097 (rand 0.9 unsound with custom logger): rand is
+    # pulled transitively via the SSH/keychain stack. The unsoundness
+    # only triggers if a downstream consumer installs a custom
+    # `log`/`tracing` subscriber that calls into `rand::rng()` mid-log
+    # — accroitre does not, so this is informational. Fix requires
+    # bumping rand across the dependency graph.
+    "RUSTSEC-2026-0097",
 ]
 
 [licenses]
