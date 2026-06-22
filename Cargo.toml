@@ -8,7 +8,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94.1"
+rust-version = "1.96.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/greysquirr3l/accroitre"
 readme = "README.md"
@@ -16,7 +16,25 @@ keywords = ["file-copy", "deduplication", "ssh", "backup", "cli"]
 categories = ["command-line-utilities", "filesystem"]
 
 [workspace.lints.clippy]
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -2 }
+nursery = { level = "warn", priority = -2 }
+cargo = { level = "warn", priority = -2 }
+perf = { level = "warn", priority = -2 }
+
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+struct_excessive_bools = "allow"
 multiple_crate_versions = "allow"
+
+unwrap_used = { level = "deny", priority = -1 }
+expect_used = { level = "deny", priority = -1 }
+panic = { level = "deny", priority = -1 }
+indexing_slicing = { level = "deny", priority = -1 }
+cast_ptr_alignment = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
 
 [workspace.dependencies]
 # Core error handling

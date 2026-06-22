@@ -28,7 +28,7 @@ Architecture: collapsed hexagonal (DDD-lite). Two workspace crates:
 
 ## Rules
 
-- Rust edition 2024, stable toolchain 1.94.1 only — no nightly features.
+- Rust edition 2024, stable toolchain 1.96.0 only — no nightly features.
 
 - Never use .expect() or .unwrap() on Result/Option — use ? or explicit match/if let.
 
