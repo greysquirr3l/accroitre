@@ -30,4 +30,6 @@ jobs:
           rust-version: "1.96.0"
 
       - name: Run cargo-deny
-        run: cargo deny --all-features check
+        # The Embark action installs the binary as `cargo-deny`, not the
+        # `cargo deny` subcommand alias. Invoke the binary directly.
+        run: cargo-deny --all-features check

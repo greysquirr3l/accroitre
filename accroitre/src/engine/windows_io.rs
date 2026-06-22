@@ -89,7 +89,7 @@ fn open_file(path: &Path, read: bool) -> Result<HANDLE, io::Error> {
             std::ptr::null(),
             disposition,
             FILE_ATTRIBUTE_NORMAL,
-            0,
+            HANDLE::default(),
         )
     };
 
