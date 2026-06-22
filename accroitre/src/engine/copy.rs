@@ -472,10 +472,7 @@ fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), C
 
     // On Linux, try copy_file_range (kernel-to-kernel zero-copy).
     #[cfg(target_os = "linux")]
-    if matches!(
-        super::linux_io::try_copy_file_range(src, dest),
-        Ok(true)
-    ) {
+    if matches!(super::linux_io::try_copy_file_range(src, dest), Ok(true)) {
         return Ok(());
     }
 
