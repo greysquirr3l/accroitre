@@ -77,31 +77,38 @@ pub fn try_copy_file_range(src: &Path, dest: &Path) -> Result<bool, CopyError> {
 
         if n < 0 {
             let err = io::Error::last_os_error();
-            return match err.raw_os_error() {
+            if matches!(
+                err.raw_os_error(),
+                Some(libc::ENOSYS | libc::EXDEV | libc::EOPNOTSUPP | libc::EINVAL)
+            ) {
                 // Unsupported — caller should fall back to buffered copy.
-                Some(libc::ENOSYS | libc::EXDEV | libc::EOPNOTSUPP | libc::EINVAL) => {
-                    debug!(
-                        "copy_file_range not supported for {} -> {}: {err}",
-                        src.display(),
-                        dest.display()
-                    );
-                    // Clean up partial dest file.
-                    let _ = fs::remove_file(dest);
-                    Ok(false)
-                }
-                _ => Err(CopyError::FileCopy {
-                    src: src.to_path_buf(),
-                    dst: dest.to_path_buf(),
-                    source: err,
-                }),
-            };
+                debug!(
+                    "copy_file_range not supported for {} -> {}: {err}",
+                    src.display(),
+                    dest.display()
+                );
+                // Clean up partial dest file.
+                let _ = fs::remove_file(dest);
+                return Ok(false);
+            }
+            return Err(CopyError::FileCopy {
+                src: src.to_path_buf(),
+                dst: dest.to_path_buf(),
+                source: err,
+            });
         }
 
         if n == 0 {
             break; // EOF
         }
 
-        remaining -= n as u64;
+        // `copy_file_range` returns `isize`; negative values are handled above.
+        let n_u64 = u64::try_from(n).map_err(|e| CopyError::FileCopy {
+            src: src.to_path_buf(),
+            dst: dest.to_path_buf(),
+            source: io::Error::other(e),
+        })?;
+        remaining -= n_u64;
     }
 
     debug!(
@@ -155,24 +162,31 @@ pub fn try_sendfile(src: &Path, dest_fd: i32) -> Result<Option<u64>, CopyError> 
 
         if n < 0 {
             let err = io::Error::last_os_error();
-            return match err.raw_os_error() {
-                Some(libc::ENOSYS | libc::EOPNOTSUPP | libc::EINVAL) => {
-                    debug!("sendfile not supported: {err}");
-                    Ok(None)
-                }
-                _ => Err(CopyError::FileCopy {
-                    src: src.to_path_buf(),
-                    dst: Path::new("<socket>").to_path_buf(),
-                    source: err,
-                }),
-            };
+            if matches!(
+                err.raw_os_error(),
+                Some(libc::ENOSYS | libc::EOPNOTSUPP | libc::EINVAL)
+            ) {
+                debug!("sendfile not supported: {err}");
+                return Ok(None);
+            }
+            return Err(CopyError::FileCopy {
+                src: src.to_path_buf(),
+                dst: Path::new("<socket>").to_path_buf(),
+                source: err,
+            });
         }
 
         if n == 0 {
             break;
         }
 
-        total_sent += n as u64;
+        // `sendfile` returns `isize`; negative values are handled above.
+        let n_u64 = u64::try_from(n).map_err(|e| CopyError::FileCopy {
+            src: src.to_path_buf(),
+            dst: Path::new("<socket>").to_path_buf(),
+            source: io::Error::other(e),
+        })?;
+        total_sent += n_u64;
     }
 
     debug!("sendfile: {} ({total_sent} bytes)", src.display());
@@ -224,10 +238,16 @@ fn splice_loop(
     len: u64,
 ) -> Result<bool, CopyError> {
     let mut remaining = len;
-    let flags = libc::SPLICE_F_MOVE | libc::SPLICE_F_MORE;
+    let flags: u32 = libc::SPLICE_F_MOVE | libc::SPLICE_F_MORE;
 
     while remaining > 0 {
-        let chunk = remaining.min(CFR_CHUNK_SIZE as u64) as usize;
+        let chunk = usize::try_from(remaining.min(CFR_CHUNK_SIZE as u64)).map_err(|e| {
+            CopyError::Transport {
+                message: "splice chunk size overflow".to_owned(),
+                path: PathBuf::new(),
+                source: io::Error::other(e),
+            }
+        })?;
 
         // Splice from source into pipe.
         // SAFETY: splice is a Linux syscall. We pass valid fds.
@@ -238,20 +258,20 @@ fn splice_loop(
                 pipe_write,
                 std::ptr::null_mut(),
                 chunk,
-                flags as u32,
+                flags,
             )
         };
 
         if to_pipe < 0 {
             let err = io::Error::last_os_error();
-            return match err.raw_os_error() {
-                Some(libc::ENOSYS | libc::EINVAL) => Ok(false),
-                _ => Err(CopyError::Transport {
-                    message: "splice(src → pipe) failed".to_owned(),
-                    path: PathBuf::new(),
-                    source: err,
-                }),
-            };
+            if matches!(err.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL)) {
+                return Ok(false);
+            }
+            return Err(CopyError::Transport {
+                message: "splice(src → pipe) failed".to_owned(),
+                path: PathBuf::new(),
+                source: err,
+            });
         }
 
         if to_pipe == 0 {
@@ -259,17 +279,26 @@ fn splice_loop(
         }
 
         // Splice from pipe into destination.
-        let mut pipe_remaining = to_pipe;
+        let mut pipe_remaining = u64::try_from(to_pipe).map_err(|e| CopyError::Transport {
+            message: "splice byte count overflow".to_owned(),
+            path: PathBuf::new(),
+            source: io::Error::other(e),
+        })?;
         while pipe_remaining > 0 {
             // SAFETY: splice is a Linux syscall with valid fds.
+            let chunk = usize::try_from(pipe_remaining).map_err(|e| CopyError::Transport {
+                message: "splice chunk size overflow".to_owned(),
+                path: PathBuf::new(),
+                source: io::Error::other(e),
+            })?;
             let from_pipe = unsafe {
                 libc::splice(
                     pipe_read,
                     std::ptr::null_mut(),
                     dest_fd,
                     std::ptr::null_mut(),
-                    pipe_remaining as usize,
-                    flags as u32,
+                    chunk,
+                    flags,
                 )
             };
 
@@ -285,10 +314,10 @@ fn splice_loop(
                 break;
             }
 
-            pipe_remaining -= from_pipe;
+            pipe_remaining = pipe_remaining.saturating_sub(u64::try_from(from_pipe)?);
         }
 
-        remaining -= to_pipe as u64;
+        remaining = remaining.saturating_sub(u64::try_from(to_pipe)?);
     }
 
     Ok(true)

@@ -245,32 +245,33 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
 async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
     use std::os::unix::io::AsRawFd;
 
-    // FIEMAP ioctl constants from <linux/fs.h>.
-    // libc 0.2 doesn't expose `fiemap`/`fiemap_extent` types or the `FS_IOC_FIEMAP`
-    // constant, so we define the struct layout here (matches the Linux kernel ABI
-    // since 2.6.28) and use the ioctl number directly via `_IOWR('f', 11, ...)`.
+    // FIEMAP ioctl constants from `<linux/fs.h>`.
+    // libc 0.2 doesn't expose `fiemap` / `fiemap_extent` types or the
+    // `FS_IOC_FIEMAP` constant, so we define the struct layout here
+    // (matches the Linux kernel ABI since 2.6.28) and use the ioctl number
+    // directly via `_IOWR('f', 11, ...)`.
     #[repr(C)]
     #[derive(Default)]
     struct FiemapExtent {
-        fe_physical: u64,
-        fe_logical: u64,
-        fe_length: u64,
-        fe_reserved64: [u64; 2],
-        fe_flags: u32,
-        fe_reserved: [u32; 3],
+        physical: u64,
+        logical: u64,
+        length: u64,
+        reserved64: [u64; 2],
+        flags: u32,
+        reserved: [u32; 3],
     }
     #[repr(C)]
     #[derive(Default)]
     struct Fiemap {
-        fm_start: u64,
-        fm_length: u64,
-        fm_flags: u32,
-        fm_mapped_extents: u32,
-        fm_extent_count: u32,
-        fm_reserved: u32,
-        fm_extents: [FiemapExtent; 0],
+        start: u64,
+        length: u64,
+        flags: u32,
+        mapped_extents: u32,
+        extent_count: u32,
+        reserved: u32,
+        extents: [FiemapExtent; 0],
     }
-    // _IOWR('f', 11, sizeof(struct fiemap)) on 64-bit Linux.
+    // `_IOWR('f', 11, sizeof(struct fiemap))` on 64-bit Linux.
     const FS_IOC_FIEMAP: libc::c_ulong = 3_223_348_747;
 
     let path = path.to_path_buf();
@@ -280,15 +281,15 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
             source: e,
         })?;
 
-        // SAFETY: We allocate a buffer that holds a `Fiemap` followed by space for
-        // one `FiemapExtent`, zero-initialize it, and pass a valid fd and a
-        // properly-aligned pointer to ioctl. The kernel writes up to
-        // `fm_extent_count` extents into the trailing region.
+        // SAFETY: We allocate a buffer that holds a `Fiemap` followed by space
+        // for one `FiemapExtent`, zero-initialize it, and pass a valid fd and
+        // a properly-aligned pointer to ioctl. The kernel writes up to
+        // `extent_count` extents into the trailing region.
         let mut fm: Fiemap = Fiemap {
-            fm_start: 0,
-            fm_length: u64::MAX,
-            fm_flags: 0,
-            fm_extent_count: 1,
+            start: 0,
+            length: u64::MAX,
+            flags: 0,
+            extent_count: 1,
             ..Default::default()
         };
         let fm_ptr = std::ptr::addr_of_mut!(fm).cast::<libc::c_void>();
@@ -297,11 +298,11 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
             return Ok(None);
         }
 
-        if fm.fm_mapped_extents > 0 {
-            // SAFETY: The kernel has populated up to `fm_extent_count` extents
+        if fm.mapped_extents > 0 {
+            // SAFETY: The kernel has populated up to `extent_count` extents
             // immediately after the `Fiemap` header in our buffer.
-            let extent_ptr = unsafe { std::ptr::addr_of!(fm.fm_extents).cast::<FiemapExtent>() };
-            let physical = unsafe { (*extent_ptr).fe_physical };
+            let extent_ptr = unsafe { std::ptr::addr_of!(fm.extents).cast::<FiemapExtent>() };
+            let physical = unsafe { (*extent_ptr).physical };
             Ok(Some(physical))
         } else {
             Ok(None)
@@ -310,7 +311,7 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
     .await
     .map_err(|e| ScanError::PhysicalOffset {
         path: PathBuf::from("<join-error>"),
-        source: std::io::Error::new(std::io::ErrorKind::Other, e),
+        source: std::io::Error::other(e),
     })?
 }
 
