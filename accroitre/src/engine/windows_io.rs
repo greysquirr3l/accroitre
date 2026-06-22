@@ -9,14 +9,13 @@ use std::path::{Path, PathBuf};
 
 use tracing::{debug, warn};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, BOOL, ERROR_INVALID_FUNCTION, FALSE, HANDLE, INVALID_HANDLE_VALUE,
+    BOOL, CloseHandle, ERROR_INVALID_FUNCTION, FALSE, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
     TRUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CopyFileExW, CreateFileW, DeviceIoControl, GetFileInformationByHandle,
-    GetVolumeInformationByHandleW, SetFilePointerEx, BY_HANDLE_FILE_INFORMATION,
-    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-    FILE_SHARE_READ, OPEN_EXISTING,
+    BY_HANDLE_FILE_INFORMATION, CREATE_ALWAYS, CopyFileExW, CreateFileW, DeviceIoControl,
+    FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ,
+    GetFileInformationByHandle, GetVolumeInformationByHandleW, OPEN_EXISTING, SetFilePointerEx,
 };
 use windows_sys::Win32::System::Ioctl::{
     FSCTL_DUPLICATE_EXTENTS_TO_FILE, FSCTL_GET_RETRIEVAL_POINTERS,
@@ -61,7 +60,10 @@ pub fn ensure_long_path(path: &Path) -> PathBuf {
 /// Convert a Rust `Path` to a wide (UTF-16) null-terminated string for Win32 API calls.
 fn to_wide(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
-    path.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 /// Open a file handle using `CreateFileW`.
@@ -212,8 +214,7 @@ pub fn try_refs_block_clone(src: &Path, dest: &Path) -> Result<bool, io::Error> 
     if ok == FALSE {
         return Err(io::Error::last_os_error());
     }
-    let file_size =
-        i64::from(info.nFileSizeHigh) << 32 | i64::from(info.nFileSizeLow);
+    let file_size = i64::from(info.nFileSizeHigh) << 32 | i64::from(info.nFileSizeLow);
 
     if file_size == 0 {
         // Empty files don't need block cloning.
@@ -225,9 +226,7 @@ pub fn try_refs_block_clone(src: &Path, dest: &Path) -> Result<bool, io::Error> 
 
     // Set destination file size to match source.
     // SAFETY: `SetFilePointerEx` sets the file pointer position on a valid handle.
-    let ok = unsafe {
-        SetFilePointerEx(dest_handle, file_size, std::ptr::null_mut(), FILE_BEGIN)
-    };
+    let ok = unsafe { SetFilePointerEx(dest_handle, file_size, std::ptr::null_mut(), FILE_BEGIN) };
     if ok == FALSE {
         return Err(io::Error::last_os_error());
     }
@@ -296,10 +295,10 @@ pub fn try_copy_file_ex(src: &Path, dest: &Path) -> Result<bool, io::Error> {
         CopyFileExW(
             wide_src.as_ptr(),
             wide_dest.as_ptr(),
-            None,            // no progress callback
+            None, // no progress callback
             std::ptr::null(),
             std::ptr::null_mut(), // no cancel flag
-            0,               // no flags — overwrite if exists
+            0,                    // no flags — overwrite if exists
         )
     };
 
@@ -402,7 +401,10 @@ pub fn detect_filesystem(path: &Path) -> Result<Option<String>, io::Error> {
     }
 
     // Find null terminator.
-    let len = fs_name.iter().position(|&c| c == 0).unwrap_or(fs_name.len());
+    let len = fs_name
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(fs_name.len());
     let name = String::from_utf16_lossy(&fs_name[..len]);
     if name.is_empty() {
         Ok(None)
@@ -412,7 +414,6 @@ pub fn detect_filesystem(path: &Path) -> Result<Option<String>, io::Error> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -475,10 +476,7 @@ mod tests {
         let result = detect_filesystem(Path::new("C:\\"));
         match result {
             Ok(Some(fs)) => {
-                assert!(
-                    fs == "NTFS" || fs == "ReFS",
-                    "unexpected filesystem: {fs}"
-                );
+                assert!(fs == "NTFS" || fs == "ReFS", "unexpected filesystem: {fs}");
             }
             Ok(None) => {} // Can happen in CI environments.
             Err(_) => {}   // May fail in restricted environments.

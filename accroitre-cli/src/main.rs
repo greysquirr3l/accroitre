@@ -37,7 +37,6 @@ enum Commands {
 
 /// Arguments for the copy (and default) operation.
 #[derive(Parser, Debug)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct CopyArgs {
     /// Source path.  Use `user@host:/path` for remote SSH sources.
     #[arg(value_name = "SOURCE")]
@@ -268,11 +267,9 @@ fn run_copy(args: &CopyArgs) -> i32 {
     // Install Ctrl-C handler.
     ctrlc_handler(cancelled_for_handler);
 
-    let thread_count = args.threads.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(4)
-    });
+    let thread_count = args
+        .threads
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from));
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(thread_count)
@@ -349,12 +346,6 @@ fn run_update(args: &UpdateArgs) -> i32 {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 mod tests {
     use super::*;
     use clap::Parser;
@@ -413,33 +404,35 @@ mod tests {
     }
 
     #[test]
-    fn copy_args_defaults() {
-        let cli = Cli::try_parse_from(["accro", "copy", "/src", "/dst"]).unwrap();
-        if let Some(Commands::Copy(args)) = cli.command {
-            assert_eq!(args.source, "/src");
-            assert_eq!(args.destination, "/dst");
-            assert_eq!(args.buffer, 64);
-            assert!(args.threads.is_none());
-            assert!(!args.dry_run);
-            assert!(!args.no_verify);
-            assert!(!args.no_dedup);
-            assert!(!args.no_cache);
-            assert!(!args.force);
-            assert!(!args.overwrite);
-            assert!(!args.delete);
-            assert!(args.exclude.is_empty());
-            assert!(args.log_file.is_none());
-            assert!(!args.quiet);
-            assert_eq!(args.ssh_src_port, 22);
-            assert_eq!(args.ssh_dst_port, 22);
-            assert!(!args.compress);
-        } else {
-            panic!("Expected Copy command");
+    fn copy_args_defaults() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["accro", "copy", "/src", "/dst"])?;
+        match cli.command {
+            Some(Commands::Copy(args)) => {
+                assert_eq!(args.source, "/src");
+                assert_eq!(args.destination, "/dst");
+                assert_eq!(args.buffer, 64);
+                assert!(args.threads.is_none());
+                assert!(!args.dry_run);
+                assert!(!args.no_verify);
+                assert!(!args.no_dedup);
+                assert!(!args.no_cache);
+                assert!(!args.force);
+                assert!(!args.overwrite);
+                assert!(!args.delete);
+                assert!(args.exclude.is_empty());
+                assert!(args.log_file.is_none());
+                assert!(!args.quiet);
+                assert_eq!(args.ssh_src_port, 22);
+                assert_eq!(args.ssh_dst_port, 22);
+                assert!(!args.compress);
+            }
+            _ => return Err("Expected Copy command".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn copy_args_all_flags() {
+    fn copy_args_all_flags() -> Result<(), Box<dyn std::error::Error>> {
         let cli = Cli::try_parse_from([
             "accro",
             "copy",
@@ -476,71 +469,76 @@ mod tests {
             "-z",
             "user@remote:/src",
             "admin@backup:/dst",
-        ])
-        .unwrap();
+        ])?;
 
-        if let Some(Commands::Copy(args)) = cli.command {
-            assert_eq!(args.buffer, 128);
-            assert_eq!(args.threads, Some(8));
-            assert!(args.dry_run);
-            assert!(args.no_verify);
-            assert!(args.no_dedup);
-            assert!(args.no_cache);
-            assert!(args.force);
-            assert!(args.overwrite);
-            assert!(args.delete);
-            assert_eq!(args.exclude, vec!["*.log", "tmp/**"]);
-            assert_eq!(args.log_file, Some(PathBuf::from("run.log")));
-            assert!(args.quiet);
-            assert_eq!(args.ssh_src_port, 2222);
-            assert_eq!(
-                args.ssh_src_key,
-                Some(PathBuf::from("/home/nick/.ssh/id_ed25519"))
-            );
-            assert_eq!(args.ssh_src_password, Some("secret".to_owned()));
-            assert_eq!(args.ssh_dst_port, 2223);
-            assert_eq!(args.ssh_dst_key, Some(PathBuf::from("/keys/dst")));
-            assert_eq!(args.ssh_dst_password, Some("other".to_owned()));
-            assert!(args.compress);
-            assert_eq!(args.source, "user@remote:/src");
-            assert_eq!(args.destination, "admin@backup:/dst");
-        } else {
-            panic!("Expected Copy command");
+        match cli.command {
+            Some(Commands::Copy(args)) => {
+                assert_eq!(args.buffer, 128);
+                assert_eq!(args.threads, Some(8));
+                assert!(args.dry_run);
+                assert!(args.no_verify);
+                assert!(args.no_dedup);
+                assert!(args.no_cache);
+                assert!(args.force);
+                assert!(args.overwrite);
+                assert!(args.delete);
+                assert_eq!(args.exclude, vec!["*.log", "tmp/**"]);
+                assert_eq!(args.log_file, Some(PathBuf::from("run.log")));
+                assert!(args.quiet);
+                assert_eq!(args.ssh_src_port, 2222);
+                assert_eq!(
+                    args.ssh_src_key,
+                    Some(PathBuf::from("/home/nick/.ssh/id_ed25519"))
+                );
+                assert_eq!(args.ssh_src_password, Some("secret".to_owned()));
+                assert_eq!(args.ssh_dst_port, 2223);
+                assert_eq!(args.ssh_dst_key, Some(PathBuf::from("/keys/dst")));
+                assert_eq!(args.ssh_dst_password, Some("other".to_owned()));
+                assert!(args.compress);
+                assert_eq!(args.source, "user@remote:/src");
+                assert_eq!(args.destination, "admin@backup:/dst");
+            }
+            _ => return Err("Expected Copy command".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn hash_subcommand_defaults() {
-        let cli = Cli::try_parse_from(["accro", "hash", "/data/file.bin"]).unwrap();
-        if let Some(Commands::Hash(args)) = cli.command {
-            assert_eq!(args.paths, vec![PathBuf::from("/data/file.bin")]);
-            assert_eq!(args.algorithm, "xxhash128");
-            assert!(args.threads.is_none());
-        } else {
-            panic!("Expected Hash command");
+    fn hash_subcommand_defaults() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["accro", "hash", "/data/file.bin"])?;
+        match cli.command {
+            Some(Commands::Hash(args)) => {
+                assert_eq!(args.paths, vec![PathBuf::from("/data/file.bin")]);
+                assert_eq!(args.algorithm, "xxhash128");
+                assert!(args.threads.is_none());
+            }
+            _ => return Err("Expected Hash command".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn hash_subcommand_blake3() {
-        let cli =
-            Cli::try_parse_from(["accro", "hash", "--algorithm", "blake3", "/a", "/b"]).unwrap();
-        if let Some(Commands::Hash(args)) = cli.command {
-            assert_eq!(args.algorithm, "blake3");
-            assert_eq!(args.paths, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
-        } else {
-            panic!("Expected Hash command");
+    fn hash_subcommand_blake3() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["accro", "hash", "--algorithm", "blake3", "/a", "/b"])?;
+        match cli.command {
+            Some(Commands::Hash(args)) => {
+                assert_eq!(args.algorithm, "blake3");
+                assert_eq!(args.paths, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
+            }
+            _ => return Err("Expected Hash command".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn version_subcommand() {
-        let cli = Cli::try_parse_from(["accro", "version"]).unwrap();
+    fn version_subcommand() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["accro", "version"])?;
         assert!(matches!(cli.command, Some(Commands::Version)));
+        Ok(())
     }
 
     #[test]
-    fn exclude_accepts_multiple_values() {
+    fn exclude_accepts_multiple_values() -> Result<(), Box<dyn std::error::Error>> {
         let cli = Cli::try_parse_from([
             "accro",
             "copy",
@@ -552,15 +550,19 @@ mod tests {
             "node_modules/**",
             "/src",
             "/dst",
-        ])
-        .unwrap();
-        if let Some(Commands::Copy(args)) = cli.command {
-            assert_eq!(args.exclude.len(), 3);
-            assert_eq!(args.exclude[0], "*.tmp");
-            assert_eq!(args.exclude[1], "*.bak");
-            assert_eq!(args.exclude[2], "node_modules/**");
-        } else {
-            panic!("Expected Copy command");
+        ])?;
+        match cli.command {
+            Some(Commands::Copy(args)) => {
+                assert_eq!(args.exclude.len(), 3);
+                let e0 = args.exclude.first().ok_or("missing exclude 0")?;
+                let e1 = args.exclude.get(1).ok_or("missing exclude 1")?;
+                let e2 = args.exclude.get(2).ok_or("missing exclude 2")?;
+                assert_eq!(e0, "*.tmp");
+                assert_eq!(e1, "*.bak");
+                assert_eq!(e2, "node_modules/**");
+            }
+            _ => return Err("Expected Copy command".into()),
         }
+        Ok(())
     }
 }

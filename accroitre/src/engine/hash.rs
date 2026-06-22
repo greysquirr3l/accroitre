@@ -238,7 +238,6 @@ fn hash_file_blake3(file: &mut File, path: &Path, buffer_size: usize) -> Result<
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
 
@@ -274,56 +273,54 @@ mod tests {
     }
 
     #[test]
-    fn hash_bytes_blake3_known_digest() {
+    fn hash_bytes_blake3_known_digest() -> Result<(), Box<dyn std::error::Error>> {
         // BLAKE3 of "hello world" is well-known.
         let data = b"hello world";
         let h = hash_bytes(data, HashAlgorithm::Blake3);
         let expected = blake3::hash(data);
-        if let Hash::Blake3(bytes) = h {
-            assert_eq!(&bytes, expected.as_bytes());
-        } else {
-            panic!("expected Blake3 variant");
+        match h {
+            Hash::Blake3(bytes) => assert_eq!(&bytes, expected.as_bytes()),
+            Hash::XxHash128(_) => return Err("expected Blake3 variant".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn hash_bytes_xxhash128_known_digest() {
+    fn hash_bytes_xxhash128_known_digest() -> Result<(), Box<dyn std::error::Error>> {
         let data = b"hello world";
         let h = hash_bytes(data, HashAlgorithm::XxHash128);
         let expected = xxhash_rust::xxh3::xxh3_128(data);
-        if let Hash::XxHash128(bytes) = h {
-            assert_eq!(bytes, expected.to_be_bytes());
-        } else {
-            panic!("expected XxHash128 variant");
+        match h {
+            Hash::XxHash128(bytes) => assert_eq!(bytes, expected.to_be_bytes()),
+            Hash::Blake3(_) => return Err("expected XxHash128 variant".into()),
         }
+        Ok(())
     }
 
     #[test]
-    fn hash_file_xxhash128() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn hash_file_xxhash128() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let path = tmp.path().join("test.bin");
-        fs::write(&path, b"file content for hashing").expect("write");
+        fs::write(&path, b"file content for hashing")?;
 
-        let result = hash_file(&path, HashAlgorithm::XxHash128, DEFAULT_BUFFER_SIZE);
-        assert!(result.is_ok());
-        let hash = result.expect("hash");
-        assert_eq!(hash.algorithm(), HashAlgorithm::XxHash128);
+        let result = hash_file(&path, HashAlgorithm::XxHash128, DEFAULT_BUFFER_SIZE)?;
+        assert_eq!(result.algorithm(), HashAlgorithm::XxHash128);
 
         // Same file should produce same hash.
-        let result2 = hash_file(&path, HashAlgorithm::XxHash128, DEFAULT_BUFFER_SIZE);
-        assert_eq!(hash, result2.expect("hash2"));
+        let result2 = hash_file(&path, HashAlgorithm::XxHash128, DEFAULT_BUFFER_SIZE)?;
+        assert_eq!(result, result2);
+        Ok(())
     }
 
     #[test]
-    fn hash_file_blake3() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn hash_file_blake3() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let path = tmp.path().join("test.bin");
-        fs::write(&path, b"file content for hashing").expect("write");
+        fs::write(&path, b"file content for hashing")?;
 
-        let result = hash_file(&path, HashAlgorithm::Blake3, DEFAULT_BUFFER_SIZE);
-        assert!(result.is_ok());
-        let hash = result.expect("hash");
-        assert_eq!(hash.algorithm(), HashAlgorithm::Blake3);
+        let result = hash_file(&path, HashAlgorithm::Blake3, DEFAULT_BUFFER_SIZE)?;
+        assert_eq!(result.algorithm(), HashAlgorithm::Blake3);
+        Ok(())
     }
 
     #[test]
@@ -337,22 +334,22 @@ mod tests {
     }
 
     #[test]
-    fn hash_entries_parallel_all_files() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn hash_entries_parallel_all_files() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
         // Create test files.
         for i in 0..10 {
-            fs::write(root.join(format!("file_{i}.txt")), format!("content {i}")).expect("write");
+            fs::write(root.join(format!("file_{i}.txt")), format!("content {i}"))?;
         }
 
         let mut entries: Vec<FileEntry> = (0..10)
-            .map(|i| {
+            .map(|i| -> Result<FileEntry, Box<dyn std::error::Error>> {
                 let path = root.join(format!("file_{i}.txt"));
-                let size = fs::metadata(&path).expect("metadata").len();
-                FileEntry::new(path, size)
+                let size = fs::metadata(&path)?.len();
+                Ok(FileEntry::new(path, size))
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         let config = HashConfig::default();
         let result = hash_entries(&mut entries, &config, &NullProgress);
@@ -364,16 +361,17 @@ mod tests {
         for entry in &entries {
             assert!(entry.hash.is_some());
         }
+        Ok(())
     }
 
     #[test]
-    fn hash_entries_identical_files_same_hash() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn hash_entries_identical_files_same_hash() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
         let content = "identical content";
-        fs::write(root.join("a.txt"), content).expect("write");
-        fs::write(root.join("b.txt"), content).expect("write");
+        fs::write(root.join("a.txt"), content)?;
+        fs::write(root.join("b.txt"), content)?;
 
         let mut entries = vec![
             FileEntry::new(root.join("a.txt"), content.len() as u64),
@@ -386,15 +384,16 @@ mod tests {
         let hash_a = entries.first().and_then(|e| e.hash.as_ref());
         let hash_b = entries.get(1).and_then(|e| e.hash.as_ref());
         assert_eq!(hash_a, hash_b);
+        Ok(())
     }
 
     #[test]
-    fn hash_entries_different_files_different_hash() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn hash_entries_different_files_different_hash() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
-        fs::write(root.join("a.txt"), "content a").expect("write");
-        fs::write(root.join("b.txt"), "content b").expect("write");
+        fs::write(root.join("a.txt"), "content a")?;
+        fs::write(root.join("b.txt"), "content b")?;
 
         let mut entries = vec![
             FileEntry::new(root.join("a.txt"), 9),
@@ -407,13 +406,14 @@ mod tests {
         let hash_a = entries.first().and_then(|e| e.hash.as_ref());
         let hash_b = entries.get(1).and_then(|e| e.hash.as_ref());
         assert_ne!(hash_a, hash_b);
+        Ok(())
     }
 
     #[test]
-    fn hash_entries_custom_thread_count() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn hash_entries_custom_thread_count() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let path = tmp.path().join("test.txt");
-        fs::write(&path, "test data").expect("write");
+        fs::write(&path, "test data")?;
 
         let mut entries = vec![FileEntry::new(path, 9)];
         let config = HashConfig {
@@ -423,18 +423,19 @@ mod tests {
 
         let result = hash_entries(&mut entries, &config, &NullProgress);
         assert_eq!(result.files_hashed, 1);
+        Ok(())
     }
 
     #[test]
-    fn hash_empty_file() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn hash_empty_file() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let path = tmp.path().join("empty.txt");
-        fs::write(&path, b"").expect("write");
+        fs::write(&path, b"")?;
 
-        let result = hash_file(&path, HashAlgorithm::XxHash128, DEFAULT_BUFFER_SIZE);
-        assert!(result.is_ok());
-
-        let result_b3 = hash_file(&path, HashAlgorithm::Blake3, DEFAULT_BUFFER_SIZE);
-        assert!(result_b3.is_ok());
+        let result = hash_file(&path, HashAlgorithm::XxHash128, DEFAULT_BUFFER_SIZE)?;
+        let result_b3 = hash_file(&path, HashAlgorithm::Blake3, DEFAULT_BUFFER_SIZE)?;
+        assert_eq!(result.algorithm(), HashAlgorithm::XxHash128);
+        assert_eq!(result_b3.algorithm(), HashAlgorithm::Blake3);
+        Ok(())
     }
 }

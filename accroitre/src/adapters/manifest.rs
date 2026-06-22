@@ -121,11 +121,8 @@ impl CopyManifest {
         let path = Self::manifest_path(dest_root);
         let tmp_path = path.with_extension("json.tmp");
 
-        let content = serde_json::to_string_pretty(self).map_err(|e| {
-            io::Error::other(
-                format!("failed to serialize manifest: {e}"),
-            )
-        })?;
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| io::Error::other(format!("failed to serialize manifest: {e}")))?;
 
         fs::write(&tmp_path, content)?;
         fs::rename(&tmp_path, &path)?;
@@ -135,12 +132,7 @@ impl CopyManifest {
     }
 
     /// Record that a file has been copied.
-    pub fn mark_copied(
-        &mut self,
-        relative_path: &str,
-        size: u64,
-        source_hash: Option<&str>,
-    ) {
+    pub fn mark_copied(&mut self, relative_path: &str, size: u64, source_hash: Option<&str>) {
         let entry = ManifestEntry {
             relative_path: relative_path.to_string(),
             size,
@@ -160,12 +152,7 @@ impl CopyManifest {
     }
 
     /// Record that a file has been hard-linked.
-    pub fn mark_linked(
-        &mut self,
-        relative_path: &str,
-        size: u64,
-        source_hash: Option<&str>,
-    ) {
+    pub fn mark_linked(&mut self, relative_path: &str, size: u64, source_hash: Option<&str>) {
         let entry = ManifestEntry {
             relative_path: relative_path.to_string(),
             size,
@@ -180,12 +167,7 @@ impl CopyManifest {
     ///
     /// Validates that the source file hasn't changed by comparing size and hash.
     #[must_use]
-    pub fn is_completed(
-        &self,
-        relative_path: &str,
-        size: u64,
-        source_hash: Option<&str>,
-    ) -> bool {
+    pub fn is_completed(&self, relative_path: &str, size: u64, source_hash: Option<&str>) -> bool {
         let Some(entry) = self.files.get(relative_path) else {
             return false;
         };
@@ -200,8 +182,7 @@ impl CopyManifest {
         }
 
         // If both have hashes, they must match.
-        if let (Some(manifest_hash), Some(current_hash)) =
-            (&entry.source_hash, source_hash)
+        if let (Some(manifest_hash), Some(current_hash)) = (&entry.source_hash, source_hash)
             && manifest_hash != current_hash
         {
             debug!("hash mismatch for {relative_path}");
@@ -232,7 +213,6 @@ impl CopyManifest {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use tempfile::TempDir;
 
@@ -240,11 +220,7 @@ mod tests {
 
     #[test]
     fn new_manifest_has_correct_defaults() {
-        let m = CopyManifest::new(
-            Path::new("/src"),
-            Path::new("/dst"),
-            Some("xxhash128"),
-        );
+        let m = CopyManifest::new(Path::new("/src"), Path::new("/dst"), Some("xxhash128"));
         assert_eq!(m.version, 1);
         assert_eq!(m.source_root, "/src");
         assert_eq!(m.dest_root, "/dst");
@@ -254,11 +230,7 @@ mod tests {
 
     #[test]
     fn mark_and_check_copied() {
-        let mut m = CopyManifest::new(
-            Path::new("/src"),
-            Path::new("/dst"),
-            None,
-        );
+        let mut m = CopyManifest::new(Path::new("/src"), Path::new("/dst"), None);
         m.mark_copied("dir/file.txt", 1024, Some("abc123"));
         assert!(m.is_completed("dir/file.txt", 1024, Some("abc123")));
         assert!(!m.is_completed("dir/file.txt", 2048, Some("abc123"))); // size changed
@@ -268,96 +240,94 @@ mod tests {
 
     #[test]
     fn mark_verified_updates_status() {
-        let mut m = CopyManifest::new(
-            Path::new("/src"),
-            Path::new("/dst"),
-            None,
-        );
+        let mut m = CopyManifest::new(Path::new("/src"), Path::new("/dst"), None);
         m.mark_copied("file.txt", 100, None);
-        assert_eq!(m.files.get("file.txt").map(|e| &e.status), Some(&FileStatus::Copied));
+        assert_eq!(
+            m.files.get("file.txt").map(|e| &e.status),
+            Some(&FileStatus::Copied)
+        );
 
         m.mark_verified("file.txt");
-        assert_eq!(m.files.get("file.txt").map(|e| &e.status), Some(&FileStatus::Verified));
+        assert_eq!(
+            m.files.get("file.txt").map(|e| &e.status),
+            Some(&FileStatus::Verified)
+        );
     }
 
     #[test]
     fn mark_linked() {
-        let mut m = CopyManifest::new(
-            Path::new("/src"),
-            Path::new("/dst"),
-            None,
-        );
+        let mut m = CopyManifest::new(Path::new("/src"), Path::new("/dst"), None);
         m.mark_linked("dup.txt", 500, Some("hash1"));
-        assert_eq!(m.files.get("dup.txt").map(|e| &e.status), Some(&FileStatus::Linked));
+        assert_eq!(
+            m.files.get("dup.txt").map(|e| &e.status),
+            Some(&FileStatus::Linked)
+        );
         assert!(m.is_completed("dup.txt", 500, Some("hash1")));
     }
 
     #[test]
-    fn save_and_load_round_trip() {
-        let dir = TempDir::new().expect("test tmpdir");
+    fn save_and_load_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
         let dest = dir.path();
 
-        let mut m = CopyManifest::new(
-            Path::new("/source"),
-            dest,
-            Some("blake3"),
-        );
+        let mut m = CopyManifest::new(Path::new("/source"), dest, Some("blake3"));
         m.mark_copied("a.txt", 100, Some("hash_a"));
         m.mark_linked("b.txt", 200, Some("hash_b"));
-        m.save(dest).expect("save should succeed");
+        m.save(dest)?;
 
-        let loaded = CopyManifest::load(dest)
-            .expect("load should succeed")
-            .expect("manifest should exist");
+        let loaded = CopyManifest::load(dest)?.ok_or("manifest should exist")?;
         assert_eq!(loaded.version, 1);
         assert_eq!(loaded.files.len(), 2);
         assert!(loaded.is_completed("a.txt", 100, Some("hash_a")));
         assert!(loaded.is_completed("b.txt", 200, Some("hash_b")));
+        Ok(())
     }
 
     #[test]
-    fn load_returns_none_when_no_manifest() {
-        let dir = TempDir::new().expect("test tmpdir");
-        let result = CopyManifest::load(dir.path()).expect("load should succeed");
+    fn load_returns_none_when_no_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let result = CopyManifest::load(dir.path())?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn atomic_save_survives_read_after_write() {
-        let dir = TempDir::new().expect("test tmpdir");
+    fn atomic_save_survives_read_after_write() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
         let dest = dir.path();
 
         let mut m = CopyManifest::new(Path::new("/s"), dest, None);
         m.mark_copied("f1.txt", 10, None);
-        m.save(dest).expect("first save");
+        m.save(dest)?;
 
         // Update and save again.
         m.mark_copied("f2.txt", 20, None);
-        m.save(dest).expect("second save");
+        m.save(dest)?;
 
-        let loaded = CopyManifest::load(dest)
-            .expect("load")
-            .expect("manifest exists");
+        let loaded = CopyManifest::load(dest)?.ok_or("manifest exists")?;
         assert_eq!(loaded.files.len(), 2);
+        Ok(())
     }
 
     #[test]
-    fn remove_deletes_manifest() {
-        let dir = TempDir::new().expect("test tmpdir");
+    fn remove_deletes_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
         let dest = dir.path();
 
         let mut m = CopyManifest::new(Path::new("/s"), dest, None);
-        m.save(dest).expect("save");
+        m.save(dest)?;
         assert!(CopyManifest::manifest_path(dest).exists());
 
-        CopyManifest::remove(dest).expect("remove");
+        CopyManifest::remove(dest)?;
         assert!(!CopyManifest::manifest_path(dest).exists());
+        Ok(())
     }
 
     #[test]
-    fn remove_nonexistent_is_ok() {
-        let dir = TempDir::new().expect("test tmpdir");
-        CopyManifest::remove(dir.path()).expect("remove nonexistent should succeed");
+    fn remove_nonexistent_is_ok() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        CopyManifest::remove(dir.path())?;
+        Ok(())
     }
 
     #[test]

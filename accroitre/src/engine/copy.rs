@@ -99,88 +99,50 @@ pub fn execute_copy_plan_resumable(
         errors: Vec::new(),
     };
 
-    // Track how many files were skipped from a previous run.
-    let mut files_skipped: u64 = 0;
-
     let files_total = plan.entries.len() as u64;
     let bytes_total: u64 = plan.entries.iter().map(|e| e.size).sum();
 
-    // Collect indices of duplicate files for quick lookup.
-    let mut duplicate_indices = std::collections::HashSet::new();
-    for group in &plan.dedup_groups {
-        for &dup_idx in &group.duplicates {
-            duplicate_indices.insert(dup_idx);
-        }
-    }
-
     // Phase 1: Copy unique/canonical files (in disk order — plan.entries is
     // already sorted by physical_offset from the scan engine).
-    // Split into small-file batches and large files.
-    let mut small_files: Vec<(usize, &Path, &Path)> = Vec::new();
+    let mut small_files: Vec<(usize, PathBuf, PathBuf)> = Vec::new();
+    let mut files_skipped = 0_u64;
 
     for (idx, entry) in plan.entries.iter().enumerate() {
-        if duplicate_indices.contains(&idx) {
+        if is_duplicate(idx, plan) {
             continue; // Will be hard-linked in phase 2.
-        }
-
-        // Check manifest for already-completed files.
-        let relative = relative_path_str(&entry.path, &plan.source_root);
-        let hash_str = entry.hash.as_ref().map(std::string::ToString::to_string);
-        if let Some(ref manifest) = manifest
-            && manifest.is_completed(&relative, entry.size, hash_str.as_deref())
-        {
-            files_skipped += 1;
-            debug!("skipping already-completed: {relative}");
-            continue;
         }
 
         let dest_path = map_source_to_dest(&entry.path, &plan.source_root, &plan.dest_root);
 
-        // Ensure parent directory exists.
-        if let Some(parent) = dest_path.parent()
-            && let Err(e) = fs::create_dir_all(parent)
-        {
-            let err = CopyError::CreateDir {
-                path: parent.to_path_buf(),
-                source: e,
-            };
-            warn!("{err}");
-            result.errors.push(err);
+        if let Some(ref m) = manifest {
+            let relative = relative_path_str(&entry.path, &plan.source_root);
+            let hash_str = entry.hash.as_ref().map(std::string::ToString::to_string);
+            if m.is_completed(&relative, entry.size, hash_str.as_deref()) {
+                files_skipped += 1;
+                debug!("skipping already-completed: {relative}");
+                continue;
+            }
+        }
+
+        if !ensure_parent_dir(&dest_path, &mut result.errors) {
             continue;
         }
 
         if entry.size < config.small_file_threshold {
-            small_files.push((idx, &entry.path, dest_path.leak()));
+            small_files.push((idx, entry.path.clone(), dest_path));
         } else {
-            // Large file: copy with optimal syscall.
-            match copy_large_file(&entry.path, &dest_path, config) {
-                Ok(()) => {
-                    // Preserve permissions.
-                    preserve_permissions(&entry.path, &dest_path, entry.permissions);
-
-                    result.files_copied += 1;
-                    result.bytes_copied += entry.size;
-
-                    // Update manifest for this file.
-                    if let Some(ref mut m) = manifest {
-                        m.mark_copied(&relative, entry.size, hash_str.as_deref());
-                        if let Err(e) = m.save(&plan.dest_root) {
-                            warn!("failed to update manifest: {e}");
-                        }
-                    }
-
-                    progress.update(&ProgressUpdate::CopyProgress {
-                        files_copied: result.files_copied + result.files_linked + files_skipped,
-                        files_total,
-                        bytes_copied: result.bytes_copied,
-                        bytes_total,
-                    });
-                }
-                Err(e) => {
-                    warn!("{e}");
-                    result.errors.push(e);
-                }
-            }
+            copy_large_canonical_entry(
+                entry,
+                &dest_path,
+                config,
+                &mut result,
+                progress,
+                manifest.as_deref_mut(),
+                plan,
+                files_total,
+                bytes_total,
+                files_skipped,
+            );
         }
     }
 
@@ -195,23 +157,19 @@ pub fn execute_copy_plan_resumable(
             bytes_total,
             plan,
         );
-        // Update manifest for small files that were successfully copied.
-        if let Some(ref mut m) = manifest {
-            for &(idx, _, _) in &small_files {
-                if let Some(entry) = plan.entries.get(idx) {
-                    let rel = relative_path_str(&entry.path, &plan.source_root);
-                    let h = entry.hash.as_ref().map(std::string::ToString::to_string);
-                    m.mark_copied(&rel, entry.size, h.as_deref());
-                }
-            }
-            if let Err(e) = m.save(&plan.dest_root) {
-                warn!("failed to update manifest after small files: {e}");
-            }
-        }
+        mark_small_files_in_manifest(manifest.as_deref_mut(), plan, &small_files);
     }
 
     // Phase 2: Hard-link duplicates.
-    create_hard_links_resumable(plan, &mut result, progress, files_total, bytes_total, files_skipped, manifest);
+    create_hard_links_resumable(
+        plan,
+        &mut result,
+        progress,
+        files_total,
+        bytes_total,
+        files_skipped,
+        manifest,
+    );
 
     progress.update(&ProgressUpdate::PhaseComplete { phase: "copy" });
 
@@ -220,6 +178,96 @@ pub fn execute_copy_plan_resumable(
     }
 
     Ok(result)
+}
+
+/// Check whether a plan-entry index is a duplicate (not the canonical copy).
+fn is_duplicate(idx: usize, plan: &CopyPlan) -> bool {
+    plan.dedup_groups
+        .iter()
+        .any(|g| g.duplicates.contains(&idx))
+}
+
+/// Create the parent directory of `dest`, recording any error into `errors`.
+/// Returns `true` on success.
+fn ensure_parent_dir(dest: &Path, errors: &mut Vec<CopyError>) -> bool {
+    if let Some(parent) = dest.parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        let err = CopyError::CreateDir {
+            path: parent.to_path_buf(),
+            source: e,
+        };
+        warn!("{err}");
+        errors.push(err);
+        return false;
+    }
+    true
+}
+
+/// Copy one large canonical entry, updating manifest and emitting progress on success.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Phase-1 entry helper carries its full call-site context inline; further bundling hides state coupling."
+)]
+fn copy_large_canonical_entry(
+    entry: &crate::domain::FileEntry,
+    dest_path: &Path,
+    config: &CopyConfig,
+    result: &mut CopyResult,
+    progress: &dyn ProgressPort,
+    manifest: Option<&mut CopyManifest>,
+    plan: &CopyPlan,
+    files_total: u64,
+    bytes_total: u64,
+    files_skipped: u64,
+) {
+    let relative = relative_path_str(&entry.path, &plan.source_root);
+    let hash_str = entry.hash.as_ref().map(std::string::ToString::to_string);
+
+    match copy_large_file(&entry.path, dest_path, config) {
+        Ok(()) => {
+            preserve_permissions(&entry.path, dest_path, entry.permissions);
+            result.files_copied += 1;
+            result.bytes_copied += entry.size;
+
+            if let Some(m) = manifest {
+                m.mark_copied(&relative, entry.size, hash_str.as_deref());
+                if let Err(e) = m.save(&plan.dest_root) {
+                    warn!("failed to update manifest: {e}");
+                }
+            }
+
+            progress.update(&ProgressUpdate::CopyProgress {
+                files_copied: result.files_copied + result.files_linked + files_skipped,
+                files_total,
+                bytes_copied: result.bytes_copied,
+                bytes_total,
+            });
+        }
+        Err(e) => {
+            warn!("{e}");
+            result.errors.push(e);
+        }
+    }
+}
+
+/// Record the tar-batched small files as copied in the manifest.
+fn mark_small_files_in_manifest(
+    manifest: Option<&mut CopyManifest>,
+    plan: &CopyPlan,
+    small_files: &[(usize, PathBuf, PathBuf)],
+) {
+    let Some(m) = manifest else { return };
+    for (idx, _, _) in small_files {
+        if let Some(entry) = plan.entries.get(*idx) {
+            let rel = relative_path_str(&entry.path, &plan.source_root);
+            let h = entry.hash.as_ref().map(std::string::ToString::to_string);
+            m.mark_copied(&rel, entry.size, h.as_deref());
+        }
+    }
+    if let Err(e) = m.save(&plan.dest_root) {
+        warn!("failed to update manifest after small files: {e}");
+    }
 }
 
 /// Create hard links for all duplicate files, with optional manifest tracking.
@@ -246,7 +294,10 @@ fn create_hard_links_resumable(
 
             // Check manifest for already-completed links.
             let relative = relative_path_str(&dup_entry.path, &plan.source_root);
-            let hash_str = dup_entry.hash.as_ref().map(std::string::ToString::to_string);
+            let hash_str = dup_entry
+                .hash
+                .as_ref()
+                .map(std::string::ToString::to_string);
             if let Some(ref manifest) = manifest
                 && manifest.is_completed(&relative, dup_entry.size, hash_str.as_deref())
             {
@@ -407,7 +458,10 @@ fn get_available_space(_path: &Path) -> Result<u64, io::Error> {
 fn copy_large_file(src: &Path, dest: &Path, config: &CopyConfig) -> Result<(), CopyError> {
     // On macOS, try clonefile → fcopyfile → buffered copy.
     #[cfg(target_os = "macos")]
-    if matches!(super::macos_io::try_macos_optimal_copy(src, dest, config.try_clonefile), Ok(true)) {
+    if matches!(
+        super::macos_io::try_macos_optimal_copy(src, dest, config.try_clonefile),
+        Ok(true)
+    ) {
         return Ok(());
     }
 
@@ -467,7 +521,7 @@ fn buffered_copy(src: &Path, dest: &Path, buffer_size: usize) -> Result<(), Copy
 
 /// Batch-copy small files using a tar stream (pack → unpack in memory).
 fn copy_small_files_tar(
-    files: &[(usize, &Path, &Path)],
+    files: &[(usize, PathBuf, PathBuf)],
     source_root: &Path,
     result: &mut CopyResult,
     progress: &dyn ProgressPort,
@@ -479,11 +533,11 @@ fn copy_small_files_tar(
     let mut archive_buf = Vec::new();
     {
         let mut builder = tar::Builder::new(&mut archive_buf);
-        for &(_idx, src, _dest) in files {
+        for (_, src, _) in files {
             let relative = src.strip_prefix(source_root).unwrap_or(src);
             if let Err(e) = builder.append_path_with_name(src, relative) {
                 let err = CopyError::TarPack {
-                    path: src.to_path_buf(),
+                    path: src.clone(),
                     source: e,
                 };
                 warn!("{err}");
@@ -499,8 +553,8 @@ fn copy_small_files_tar(
     let mut archive = tar::Archive::new(archive_buf.as_slice());
     match archive.unpack(&plan.dest_root) {
         Ok(()) => {
-            for &(idx, _src, _dest) in files {
-                let entry_size = plan.entries.get(idx).map_or(0, |e| e.size);
+            for (idx, _, _) in files {
+                let entry_size = plan.entries.get(*idx).map_or(0, |e| e.size);
                 result.files_copied += 1;
                 result.bytes_copied += entry_size;
             }
@@ -523,9 +577,9 @@ fn copy_small_files_tar(
     }
 
     // Preserve permissions for tar-copied files.
-    for &(idx, _src, dest) in files {
-        if let Some(entry) = plan.entries.get(idx) {
-            preserve_permissions(&entry.path, Path::new(dest), entry.permissions);
+    for (idx, _, dest) in files {
+        if let Some(entry) = plan.entries.get(*idx) {
+            preserve_permissions(&entry.path, dest, entry.permissions);
         }
     }
 }
@@ -553,7 +607,6 @@ fn preserve_permissions(_src: &Path, _dest: &Path, _permissions: u32) {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
 
@@ -578,16 +631,16 @@ mod tests {
     }
 
     #[test]
-    fn copy_simple_directory_tree() {
-        let src_dir = TempDir::new().expect("src tempdir");
-        let dest_dir = TempDir::new().expect("dest tempdir");
+    fn copy_simple_directory_tree() -> Result<(), Box<dyn std::error::Error>> {
+        let src_dir = TempDir::new()?;
+        let dest_dir = TempDir::new()?;
         let src = src_dir.path();
         let dest = dest_dir.path();
 
         // Create source structure.
-        fs::create_dir_all(src.join("subdir")).expect("mkdir");
-        fs::write(src.join("a.txt"), "hello").expect("write");
-        fs::write(src.join("subdir/b.txt"), "world").expect("write");
+        fs::create_dir_all(src.join("subdir"))?;
+        fs::write(src.join("a.txt"), "hello")?;
+        fs::write(src.join("subdir/b.txt"), "world")?;
 
         let entries = vec![
             FileEntry::new(src.join("a.txt"), 5),
@@ -600,32 +653,27 @@ mod tests {
             ..CopyConfig::default()
         };
 
-        let result = execute_copy_plan(&plan, &config, &NullProgress).expect("copy");
+        let result = execute_copy_plan(&plan, &config, &NullProgress)?;
 
         assert_eq!(result.files_copied, 2);
         assert_eq!(result.errors.len(), 0);
 
         // Verify contents.
-        assert_eq!(
-            fs::read_to_string(dest.join("a.txt")).expect("read"),
-            "hello"
-        );
-        assert_eq!(
-            fs::read_to_string(dest.join("subdir/b.txt")).expect("read"),
-            "world"
-        );
+        assert_eq!(fs::read_to_string(dest.join("a.txt"))?, "hello");
+        assert_eq!(fs::read_to_string(dest.join("subdir/b.txt"))?, "world");
+        Ok(())
     }
 
     #[test]
-    fn copy_with_hard_links_for_duplicates() {
-        let src_dir = TempDir::new().expect("src tempdir");
-        let dest_dir = TempDir::new().expect("dest tempdir");
+    fn copy_with_hard_links_for_duplicates() -> Result<(), Box<dyn std::error::Error>> {
+        let src_dir = TempDir::new()?;
+        let dest_dir = TempDir::new()?;
         let src = src_dir.path();
         let dest = dest_dir.path();
 
         let content = "duplicate content";
-        fs::write(src.join("canonical.txt"), content).expect("write");
-        fs::write(src.join("dupe.txt"), content).expect("write");
+        fs::write(src.join("canonical.txt"), content)?;
+        fs::write(src.join("dupe.txt"), content)?;
 
         let entries = vec![
             FileEntry::new(src.join("canonical.txt"), content.len() as u64),
@@ -642,40 +690,35 @@ mod tests {
             ..CopyConfig::default()
         };
 
-        let result = execute_copy_plan(&plan, &config, &NullProgress).expect("copy");
+        let result = execute_copy_plan(&plan, &config, &NullProgress)?;
 
         assert_eq!(result.files_copied, 1);
         assert_eq!(result.files_linked, 1);
 
         // Both files exist with same content.
-        assert_eq!(
-            fs::read_to_string(dest.join("canonical.txt")).expect("read"),
-            content
-        );
-        assert_eq!(
-            fs::read_to_string(dest.join("dupe.txt")).expect("read"),
-            content
-        );
+        assert_eq!(fs::read_to_string(dest.join("canonical.txt"))?, content);
+        assert_eq!(fs::read_to_string(dest.join("dupe.txt"))?, content);
 
         // Verify they are hard-linked (same inode).
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            let m1 = fs::metadata(dest.join("canonical.txt")).expect("meta");
-            let m2 = fs::metadata(dest.join("dupe.txt")).expect("meta");
+            let m1 = fs::metadata(dest.join("canonical.txt"))?;
+            let m2 = fs::metadata(dest.join("dupe.txt"))?;
             assert_eq!(m1.ino(), m2.ino());
         }
+        Ok(())
     }
 
     #[test]
-    fn copy_small_files_via_tar() {
-        let src_dir = TempDir::new().expect("src tempdir");
-        let dest_dir = TempDir::new().expect("dest tempdir");
+    fn copy_small_files_via_tar() -> Result<(), Box<dyn std::error::Error>> {
+        let src_dir = TempDir::new()?;
+        let dest_dir = TempDir::new()?;
         let src = src_dir.path();
         let dest = dest_dir.path();
 
-        fs::write(src.join("small1.txt"), "tiny").expect("write");
-        fs::write(src.join("small2.txt"), "also tiny").expect("write");
+        fs::write(src.join("small1.txt"), "tiny")?;
+        fs::write(src.join("small2.txt"), "also tiny")?;
 
         let entries = vec![
             FileEntry::new(src.join("small1.txt"), 4),
@@ -688,17 +731,12 @@ mod tests {
             ..CopyConfig::default()
         };
 
-        let result = execute_copy_plan(&plan, &config, &NullProgress).expect("copy");
+        let result = execute_copy_plan(&plan, &config, &NullProgress)?;
 
         assert_eq!(result.files_copied, 2);
-        assert_eq!(
-            fs::read_to_string(dest.join("small1.txt")).expect("read"),
-            "tiny"
-        );
-        assert_eq!(
-            fs::read_to_string(dest.join("small2.txt")).expect("read"),
-            "also tiny"
-        );
+        assert_eq!(fs::read_to_string(dest.join("small1.txt"))?, "tiny");
+        assert_eq!(fs::read_to_string(dest.join("small2.txt"))?, "also tiny");
+        Ok(())
     }
 
     #[test]
@@ -713,17 +751,17 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn copy_preserves_permissions() {
+    fn copy_preserves_permissions() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::PermissionsExt;
 
-        let src_dir = TempDir::new().expect("src tempdir");
-        let dest_dir = TempDir::new().expect("dest tempdir");
+        let src_dir = TempDir::new()?;
+        let dest_dir = TempDir::new()?;
         let src = src_dir.path();
         let dest = dest_dir.path();
 
         let file_path = src.join("exec.sh");
-        fs::write(&file_path, "#!/bin/sh\necho hi").expect("write");
-        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o755)).expect("chmod");
+        fs::write(&file_path, "#!/bin/sh\necho hi")?;
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o755))?;
 
         let mut entry = FileEntry::new(file_path, 18);
         entry.permissions = 0o755;
@@ -735,24 +773,26 @@ mod tests {
             ..CopyConfig::default()
         };
 
-        execute_copy_plan(&plan, &config, &NullProgress).expect("copy");
+        execute_copy_plan(&plan, &config, &NullProgress)?;
 
-        let dest_meta = fs::metadata(dest.join("exec.sh")).expect("metadata");
+        let dest_meta = fs::metadata(dest.join("exec.sh"))?;
         let mode = dest_meta.permissions().mode() & 0o777;
         assert_eq!(mode, 0o755);
+        Ok(())
     }
 
     #[test]
-    fn empty_plan_succeeds() {
-        let src_dir = TempDir::new().expect("src tempdir");
-        let dest_dir = TempDir::new().expect("dest tempdir");
+    fn empty_plan_succeeds() -> Result<(), Box<dyn std::error::Error>> {
+        let src_dir = TempDir::new()?;
+        let dest_dir = TempDir::new()?;
 
         let plan = make_plan(src_dir.path(), dest_dir.path(), vec![], vec![]);
         let config = CopyConfig::default();
 
-        let result = execute_copy_plan(&plan, &config, &NullProgress).expect("copy");
+        let result = execute_copy_plan(&plan, &config, &NullProgress)?;
         assert_eq!(result.files_copied, 0);
         assert_eq!(result.files_linked, 0);
         assert_eq!(result.bytes_copied, 0);
+        Ok(())
     }
 }

@@ -325,7 +325,6 @@ pub fn io_uring_supported() -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -346,51 +345,57 @@ mod tests {
     #[test]
     fn io_uring_version_check() {
         // 5.1+ should support io_uring.
-        assert!(parse_kernel_version("5.1.0")
-            .is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 1)));
-        assert!(parse_kernel_version("6.0.0")
-            .is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 1)));
+        assert!(
+            parse_kernel_version("5.1.0")
+                .is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 1))
+        );
+        assert!(
+            parse_kernel_version("6.0.0")
+                .is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 1))
+        );
         // 4.x should not.
-        assert!(!parse_kernel_version("4.19.0")
-            .is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 1)));
+        assert!(
+            !parse_kernel_version("4.19.0")
+                .is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 1))
+        );
     }
 
     #[test]
-    fn copy_file_range_round_trip() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    fn copy_file_range_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("source.bin");
         let dst = tmp.path().join("dest.bin");
 
         let data: Vec<u8> = (0..=255).cycle().take(1024 * 1024).collect();
-        fs::write(&src, &data).expect("write src");
+        fs::write(&src, &data)?;
 
-        match try_copy_file_range(&src, &dst) {
-            Ok(true) => {
-                let copied = fs::read(&dst).expect("read dst");
+        match try_copy_file_range(&src, &dst)? {
+            true => {
+                let copied = fs::read(&dst)?;
                 assert_eq!(data, copied, "copy_file_range output mismatch");
             }
-            Ok(false) => {
+            false => {
                 // Acceptable: kernel/fs doesn't support copy_file_range.
             }
-            Err(e) => panic!("unexpected error: {e}"),
         }
+        Ok(())
     }
 
     #[test]
-    fn copy_file_range_empty_file() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    fn copy_file_range_empty_file() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("empty.bin");
         let dst = tmp.path().join("empty_dest.bin");
 
-        fs::write(&src, b"").expect("write empty");
+        fs::write(&src, b"")?;
 
-        match try_copy_file_range(&src, &dst) {
-            Ok(true) => {
-                let copied = fs::read(&dst).expect("read dst");
+        match try_copy_file_range(&src, &dst)? {
+            true => {
+                let copied = fs::read(&dst)?;
                 assert!(copied.is_empty());
             }
-            Ok(false) => {}
-            Err(e) => panic!("unexpected error: {e}"),
+            false => {}
         }
+        Ok(())
     }
 }

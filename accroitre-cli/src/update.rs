@@ -406,12 +406,6 @@ fn http_client() -> Result<reqwest::Client> {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 mod tests {
     use super::*;
 
@@ -422,15 +416,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_version_with_v_prefix() {
-        let v = parse_version("v1.2.3").expect("should parse");
+    fn parse_version_with_v_prefix() -> Result<(), Box<dyn std::error::Error>> {
+        let v = parse_version("v1.2.3")?;
         assert_eq!(v, Version::new(1, 2, 3));
+        Ok(())
     }
 
     #[test]
-    fn parse_version_without_prefix() {
-        let v = parse_version("2.0.0").expect("should parse");
+    fn parse_version_without_prefix() -> Result<(), Box<dyn std::error::Error>> {
+        let v = parse_version("2.0.0")?;
         assert_eq!(v, Version::new(2, 0, 0));
+        Ok(())
     }
 
     #[test]
@@ -477,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_release_valid_json() {
+    fn parse_release_valid_json() -> Result<(), Box<dyn std::error::Error>> {
         let json = serde_json::json!({
             "tag_name": "v1.0.0",
             "body": "First release",
@@ -488,12 +484,14 @@ mod tests {
                 }
             ]
         });
-        let release = parse_release(&json).expect("should parse");
+        let release = parse_release(&json).ok_or("expected release")?;
         assert_eq!(release.version, Version::new(1, 0, 0));
         assert_eq!(release.tag, "v1.0.0");
         assert_eq!(release.body, "First release");
         assert_eq!(release.assets.len(), 1);
-        assert_eq!(release.assets[0].name, "accro-linux-amd64");
+        let first_asset = release.assets.first().ok_or("expected one asset")?;
+        assert_eq!(first_asset.name, "accro-linux-amd64");
+        Ok(())
     }
 
     #[test]
@@ -507,10 +505,10 @@ mod tests {
     }
 
     #[test]
-    fn latest_release_skips_prereleases() {
+    fn latest_release_skips_prereleases() -> Result<(), Box<dyn std::error::Error>> {
         let releases = vec![
             Release {
-                version: Version::parse("1.0.0-beta").expect("parse"),
+                version: Version::parse("1.0.0-beta")?,
                 tag: "v1.0.0-beta".into(),
                 body: String::new(),
                 assets: vec![],
@@ -522,8 +520,9 @@ mod tests {
                 assets: vec![],
             },
         ];
-        let latest = latest_release(&releases).expect("should find one");
+        let latest = latest_release(&releases).ok_or("should find one")?;
         assert_eq!(latest.version, Version::new(0, 9, 0));
+        Ok(())
     }
 
     #[test]
@@ -534,26 +533,27 @@ mod tests {
     }
 
     #[test]
-    fn replace_binary_writes_and_cleans_up() {
-        let dir = tempfile::tempdir().expect("tempdir");
+    fn replace_binary_writes_and_cleans_up() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
         let exe = dir.path().join("accro");
 
         // Create a "current" binary.
-        fs::write(&exe, b"old binary").expect("write");
+        fs::write(&exe, b"old binary")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).expect("perms");
+            fs::set_permissions(&exe, fs::Permissions::from_mode(0o755))?;
         }
 
         let new_content = b"new binary v2";
-        replace_binary(&exe, new_content).expect("replace");
+        replace_binary(&exe, new_content)?;
 
-        let actual = fs::read(&exe).expect("read");
+        let actual = fs::read(&exe)?;
         assert_eq!(actual, new_content);
 
         // Verify backup was cleaned up.
         assert!(!dir.path().join(".accro.backup").exists());
+        Ok(())
     }
 
     #[test]

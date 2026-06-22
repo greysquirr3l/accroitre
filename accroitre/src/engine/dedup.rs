@@ -167,7 +167,6 @@ pub fn dedup_with_hashing(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -183,13 +182,13 @@ mod tests {
     }
 
     #[test]
-    fn identical_files_produce_one_copy_and_one_link() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn identical_files_produce_one_copy_and_one_link() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
         let content = "identical content here";
-        fs::write(root.join("a.txt"), content).expect("write");
-        fs::write(root.join("b.txt"), content).expect("write");
+        fs::write(root.join("a.txt"), content)?;
+        fs::write(root.join("b.txt"), content)?;
 
         let entries = vec![
             make_entry(root.join("a.txt"), content.len() as u64),
@@ -205,16 +204,17 @@ mod tests {
         assert_eq!(stats.duplicate_files, 1);
         assert_eq!(stats.unique_files, 1);
         assert_eq!(stats.bytes_saved, content.len() as u64);
+        Ok(())
     }
 
     #[test]
-    fn same_size_different_content_both_copied() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn same_size_different_content_both_copied() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
         // Same length (7 bytes) but different content.
-        fs::write(root.join("a.txt"), "hello_a").expect("write");
-        fs::write(root.join("b.txt"), "hello_b").expect("write");
+        fs::write(root.join("a.txt"), "hello_a")?;
+        fs::write(root.join("b.txt"), "hello_b")?;
 
         let entries = vec![
             make_entry(root.join("a.txt"), 7),
@@ -231,14 +231,15 @@ mod tests {
         assert_eq!(stats.duplicate_files, 0);
         assert_eq!(stats.unique_files, 2);
         assert_eq!(stats.bytes_saved, 0);
+        Ok(())
     }
 
     #[test]
-    fn single_unique_file_no_hashing_overhead() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn single_unique_file_no_hashing_overhead() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
-        fs::write(root.join("only.txt"), "unique file").expect("write");
+        fs::write(root.join("only.txt"), "unique file")?;
 
         let entries = vec![make_entry(root.join("only.txt"), 11)];
 
@@ -253,25 +254,26 @@ mod tests {
 
         // The entry should NOT have been hashed (unique by size).
         assert!(plan.entries.first().is_some_and(|e| e.hash.is_none()));
+        Ok(())
     }
 
     #[test]
-    fn multiple_duplicate_groups() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn multiple_duplicate_groups() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
         // Group 1: 3 identical files.
-        fs::write(root.join("g1_a.txt"), "group one content").expect("write");
-        fs::write(root.join("g1_b.txt"), "group one content").expect("write");
-        fs::write(root.join("g1_c.txt"), "group one content").expect("write");
+        fs::write(root.join("g1_a.txt"), "group one content")?;
+        fs::write(root.join("g1_b.txt"), "group one content")?;
+        fs::write(root.join("g1_c.txt"), "group one content")?;
 
         // Group 2: 2 identical files (different content from group 1 but same length).
         // Use different length to make a separate size group.
-        fs::write(root.join("g2_a.txt"), "group two").expect("write");
-        fs::write(root.join("g2_b.txt"), "group two").expect("write");
+        fs::write(root.join("g2_a.txt"), "group two")?;
+        fs::write(root.join("g2_b.txt"), "group two")?;
 
         // Unique file.
-        fs::write(root.join("unique.txt"), "I am unique and alone here!").expect("write");
+        fs::write(root.join("unique.txt"), "I am unique and alone here!")?;
 
         let entries = vec![
             make_entry(root.join("g1_a.txt"), 17),
@@ -290,15 +292,16 @@ mod tests {
         assert_eq!(stats.total_files, 6);
         assert_eq!(stats.duplicate_files, 3); // 2 dupes from g1, 1 dupe from g2
         assert_eq!(stats.unique_files, 3); // 1 canonical from g1, 1 from g2, 1 unique
+        Ok(())
     }
 
     #[test]
-    fn different_sizes_skip_hashing() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn different_sizes_skip_hashing() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
-        fs::write(root.join("small.txt"), "hi").expect("write");
-        fs::write(root.join("big.txt"), "much bigger content here").expect("write");
+        fs::write(root.join("small.txt"), "hi")?;
+        fs::write(root.join("big.txt"), "much bigger content here")?;
 
         let entries = vec![
             make_entry(root.join("small.txt"), 2),
@@ -316,6 +319,7 @@ mod tests {
         for entry in &plan.entries {
             assert!(entry.hash.is_none());
         }
+        Ok(())
     }
 
     #[test]
@@ -337,12 +341,12 @@ mod tests {
     }
 
     #[test]
-    fn dedup_with_hashing_convenience() {
-        let tmp = TempDir::new().expect("tempdir");
+    fn dedup_with_hashing_convenience() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let root = tmp.path();
 
-        fs::write(root.join("a.txt"), "same").expect("write");
-        fs::write(root.join("b.txt"), "same").expect("write");
+        fs::write(root.join("a.txt"), "same")?;
+        fs::write(root.join("b.txt"), "same")?;
 
         let entries = vec![
             make_entry(root.join("a.txt"), 4),
@@ -354,5 +358,6 @@ mod tests {
 
         assert_eq!(plan.entries.len(), 2);
         assert_eq!(stats.duplicate_files, 1);
+        Ok(())
     }
 }

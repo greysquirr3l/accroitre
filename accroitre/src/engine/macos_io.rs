@@ -87,14 +87,7 @@ pub fn try_fcopyfile(src: &Path, dest: &Path) -> Result<bool, CopyError> {
     // COPYFILE_DATA and COPYFILE_METADATA to copy data + permissions +
     // xattrs + ACLs. We pass valid file descriptors and a null state.
     let flags = libc::COPYFILE_DATA | libc::COPYFILE_METADATA;
-    let ret = unsafe {
-        libc::fcopyfile(
-            src_fd,
-            dest_fd,
-            std::ptr::null_mut(),
-            flags,
-        )
-    };
+    let ret = unsafe { libc::fcopyfile(src_fd, dest_fd, std::ptr::null_mut(), flags) };
 
     if ret == 0 {
         debug!(
@@ -145,15 +138,9 @@ pub fn set_nocache(fd: i32) -> Result<bool, io::Error> {
 /// # Errors
 ///
 /// Returns `CopyError` on non-recoverable I/O failures.
-pub fn try_macos_optimal_copy(
-    src: &Path,
-    dest: &Path,
-    try_clone: bool,
-) -> Result<bool, CopyError> {
+pub fn try_macos_optimal_copy(src: &Path, dest: &Path, try_clone: bool) -> Result<bool, CopyError> {
     // Try clonefile if requested (fast path for APFS).
-    if try_clone
-        && matches!(try_clonefile(src, dest), Ok(()))
-    {
+    if try_clone && matches!(try_clonefile(src, dest), Ok(())) {
         debug!(
             "clonefile succeeded: {} -> {}",
             src.display(),
@@ -195,7 +182,6 @@ fn try_clonefile(src: &Path, dest: &Path) -> Result<(), CopyError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
 
@@ -218,88 +204,79 @@ mod tests {
     }
 
     #[test]
-    fn fcopyfile_copies_data() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    fn fcopyfile_copies_data() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("source.txt");
         let dst = tmp.path().join("dest.txt");
 
         let data = b"hello from fcopyfile";
-        fs::write(&src, data).expect("write src");
+        fs::write(&src, data)?;
 
-        match try_fcopyfile(&src, &dst) {
-            Ok(true) => {
-                let copied = fs::read(&dst).expect("read dst");
-                assert_eq!(data.as_slice(), copied.as_slice());
-            }
-            Ok(false) => {
-                // fcopyfile not available — acceptable.
-            }
-            Err(e) => panic!("unexpected error: {e}"),
+        if try_fcopyfile(&src, &dst)? {
+            let copied = fs::read(&dst)?;
+            assert_eq!(data.as_slice(), copied.as_slice());
         }
+        // else: fcopyfile not available — acceptable.
+        Ok(())
     }
 
     #[test]
-    fn fcopyfile_empty_file() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    fn fcopyfile_empty_file() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("empty.txt");
         let dst = tmp.path().join("empty_dest.txt");
 
-        fs::write(&src, b"").expect("write empty");
+        fs::write(&src, b"")?;
 
-        match try_fcopyfile(&src, &dst) {
-            Ok(true) => {
-                let copied = fs::read(&dst).expect("read dst");
-                assert!(copied.is_empty());
-            }
-            Ok(false) => {}
-            Err(e) => panic!("unexpected error: {e}"),
+        if try_fcopyfile(&src, &dst)? {
+            let copied = fs::read(&dst)?;
+            assert!(copied.is_empty());
         }
+        Ok(())
     }
 
     #[test]
-    fn clonefile_on_same_volume() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    fn clonefile_on_same_volume() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("clone_src.txt");
         let dst = tmp.path().join("clone_dst.txt");
 
-        fs::write(&src, b"clone me").expect("write src");
+        fs::write(&src, b"clone me")?;
 
         if matches!(try_clonefile(&src, &dst), Ok(())) {
-            let copied = fs::read(&dst).expect("read dst");
+            let copied = fs::read(&dst)?;
             assert_eq!(b"clone me".as_slice(), copied.as_slice());
         }
         // else: clonefile not supported on this filesystem — acceptable.
+        Ok(())
     }
 
     #[test]
-    fn optimal_copy_fallback_chain() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    fn optimal_copy_fallback_chain() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("optimal_src.txt");
         let dst = tmp.path().join("optimal_dst.txt");
 
-        fs::write(&src, b"optimal copy test").expect("write src");
+        fs::write(&src, b"optimal copy test")?;
 
-        match try_macos_optimal_copy(&src, &dst, true) {
-            Ok(true) => {
-                let copied = fs::read(&dst).expect("read dst");
-                assert_eq!(b"optimal copy test".as_slice(), copied.as_slice());
-            }
-            Ok(false) => {
-                // Neither clonefile nor fcopyfile worked — acceptable on some fs.
-            }
-            Err(e) => panic!("unexpected error: {e}"),
+        if try_macos_optimal_copy(&src, &dst, true)? {
+            let copied = fs::read(&dst)?;
+            assert_eq!(b"optimal copy test".as_slice(), copied.as_slice());
         }
+        // else: Neither clonefile nor fcopyfile worked — acceptable on some fs.
+        Ok(())
     }
 
     #[test]
-    fn set_nocache_on_open_file() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    fn set_nocache_on_open_file() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let path = tmp.path().join("nocache.txt");
-        fs::write(&path, b"test").expect("write");
+        fs::write(&path, b"test")?;
 
-        let file = fs::File::open(&path).expect("open");
+        let file = fs::File::open(&path)?;
         let result = set_nocache(file.as_raw_fd());
         // Should succeed or gracefully fail.
         assert!(result.is_ok());
+        Ok(())
     }
 }

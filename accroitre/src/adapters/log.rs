@@ -214,11 +214,7 @@ impl JsonLog {
         }
     }
     /// Build a progress log entry.
-    fn progress_entry(
-        phase: &str,
-        path: Option<PathBuf>,
-        details: ProgressDetails,
-    ) -> LogEntry {
+    fn progress_entry(phase: &str, path: Option<PathBuf>, details: ProgressDetails) -> LogEntry {
         LogEntry {
             timestamp: now_rfc3339(),
             action: "progress".to_owned(),
@@ -336,18 +332,17 @@ fn now_rfc3339() -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use std::io::Read;
     use tempfile::NamedTempFile;
 
     #[test]
-    fn json_output_is_valid_and_deserializable() {
-        let tmp = NamedTempFile::new().unwrap();
+    fn json_output_is_valid_and_deserializable() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = NamedTempFile::new()?;
         let log_path = tmp.path().to_path_buf();
 
-        let log = JsonLog::new(&log_path).unwrap();
+        let log = JsonLog::new(&log_path)?;
         log.log_copied(Path::new("/src/a.txt"), 1024, "direct");
         log.log_linked(Path::new("/src/b.txt"), Path::new("/dest/a.txt"), 1024);
         log.log_skipped(Path::new("/src/c.txt"));
@@ -357,27 +352,25 @@ mod tests {
         drop(log);
 
         let mut content = String::new();
-        File::open(&log_path)
-            .unwrap()
-            .read_to_string(&mut content)
-            .unwrap();
+        File::open(&log_path)?.read_to_string(&mut content)?;
 
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 5); // 4 entries + 1 summary
 
         // Every line should be valid JSON.
         for line in &lines {
-            let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(line)?;
             assert!(parsed.is_object());
         }
+        Ok(())
     }
 
     #[test]
-    fn all_action_types_appear() {
-        let tmp = NamedTempFile::new().unwrap();
+    fn all_action_types_appear() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = NamedTempFile::new()?;
         let log_path = tmp.path().to_path_buf();
 
-        let log = JsonLog::new(&log_path).unwrap();
+        let log = JsonLog::new(&log_path)?;
         log.log_copied(Path::new("/a"), 10, "tar");
         log.log_linked(Path::new("/b"), Path::new("/a"), 10);
         log.log_skipped(Path::new("/c"));
@@ -387,10 +380,7 @@ mod tests {
         drop(log);
 
         let mut content = String::new();
-        File::open(&log_path)
-            .unwrap()
-            .read_to_string(&mut content)
-            .unwrap();
+        File::open(&log_path)?.read_to_string(&mut content)?;
 
         let entries: Vec<LogEntry> = content
             .lines()
@@ -402,14 +392,15 @@ mod tests {
         assert!(actions.contains(&"linked"));
         assert!(actions.contains(&"skipped"));
         assert!(actions.contains(&"error"));
+        Ok(())
     }
 
     #[test]
-    fn summary_stats_are_accurate() {
-        let tmp = NamedTempFile::new().unwrap();
+    fn summary_stats_are_accurate() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = NamedTempFile::new()?;
         let log_path = tmp.path().to_path_buf();
 
-        let log = JsonLog::new(&log_path).unwrap();
+        let log = JsonLog::new(&log_path)?;
         log.set_paths(Path::new("/src"), Path::new("/dest"));
         log.set_mode("local");
 
@@ -423,14 +414,11 @@ mod tests {
         drop(log);
 
         let mut content = String::new();
-        File::open(&log_path)
-            .unwrap()
-            .read_to_string(&mut content)
-            .unwrap();
+        File::open(&log_path)?.read_to_string(&mut content)?;
 
         // Last line is the summary.
-        let last_line = content.lines().last().unwrap();
-        let summary: LogSummary = serde_json::from_str(last_line).unwrap();
+        let last_line = content.lines().last().ok_or("empty content")?;
+        let summary: LogSummary = serde_json::from_str(last_line)?;
 
         assert_eq!(summary.action, "summary");
         assert_eq!(summary.files_copied, 2);
@@ -441,14 +429,15 @@ mod tests {
         assert_eq!(summary.source.as_deref(), Some(Path::new("/src")));
         assert_eq!(summary.destination.as_deref(), Some(Path::new("/dest")));
         assert_eq!(summary.mode.as_deref(), Some("local"));
+        Ok(())
     }
 
     #[test]
-    fn progress_events_serialized() {
-        let tmp = NamedTempFile::new().unwrap();
+    fn progress_events_serialized() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = NamedTempFile::new()?;
         let log_path = tmp.path().to_path_buf();
 
-        let log = JsonLog::new(&log_path).unwrap();
+        let log = JsonLog::new(&log_path)?;
         log.update(&ProgressUpdate::HashProgress {
             files_hashed: 5,
             files_total: 10,
@@ -461,20 +450,19 @@ mod tests {
         drop(log);
 
         let mut content = String::new();
-        File::open(&log_path)
-            .unwrap()
-            .read_to_string(&mut content)
-            .unwrap();
+        File::open(&log_path)?.read_to_string(&mut content)?;
 
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 3); // progress + phase_complete + summary
 
-        let entry: LogEntry = serde_json::from_str(lines[0]).unwrap();
+        let first = lines.first().ok_or("expected first line")?;
+        let entry: LogEntry = serde_json::from_str(first)?;
         assert_eq!(entry.action, "progress");
         assert_eq!(entry.phase.as_deref(), Some("hash"));
 
-        let details = entry.progress.unwrap();
+        let details = entry.progress.ok_or("expected progress details")?;
         assert_eq!(details.files_done, Some(5));
         assert_eq!(details.files_total, Some(10));
+        Ok(())
     }
 }

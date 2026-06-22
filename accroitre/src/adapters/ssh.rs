@@ -27,7 +27,7 @@ const DEFAULT_SSH_PORT: u16 = 22;
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default command timeout.
-const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
+const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_mins(5);
 
 /// SSH authentication method.
 #[derive(Debug, Clone)]
@@ -382,15 +382,13 @@ impl SshAdapter {
                         output.extend_from_slice(&data);
                     }
                     ChannelMsg::Eof | ChannelMsg::Close => break,
-                    ChannelMsg::ExitStatus { exit_status } => {
-                        if exit_status != 0 {
-                            return Err(SshError::RemoteCommand {
-                                command: format!("exit status: {exit_status}"),
-                                source: std::io::Error::other(format!(
-                                    "remote command exited with status {exit_status}"
-                                )),
-                            });
-                        }
+                    ChannelMsg::ExitStatus { exit_status } if exit_status != 0 => {
+                        return Err(SshError::RemoteCommand {
+                            command: format!("exit status: {exit_status}"),
+                            source: std::io::Error::other(format!(
+                                "remote command exited with status {exit_status}"
+                            )),
+                        });
                     }
                     _ => {}
                 }
@@ -411,7 +409,6 @@ impl SshAdapter {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -427,7 +424,7 @@ mod tests {
         assert_eq!(config.port, 22);
         assert_eq!(config.user, "user");
         assert_eq!(config.connect_timeout, Duration::from_secs(30));
-        assert_eq!(config.command_timeout, Duration::from_secs(300));
+        assert_eq!(config.command_timeout, Duration::from_mins(5));
         assert!(config.known_hosts_path.is_none());
     }
 
@@ -457,7 +454,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_timeout_on_unreachable_host() {
+    async fn connect_timeout_on_unreachable_host() -> Result<(), Box<dyn std::error::Error>> {
         let config = SshConfig {
             host: "192.0.2.1".to_string(), // RFC 5737 TEST-NET, guaranteed unreachable.
             port: 22,
@@ -476,5 +473,6 @@ mod tests {
             assert_eq!(host, "192.0.2.1");
             assert_eq!(port, 22);
         }
+        Ok(())
     }
 }

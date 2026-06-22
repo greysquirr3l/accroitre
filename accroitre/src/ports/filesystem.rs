@@ -20,10 +20,8 @@ pub trait FileSystemPort: Send + Sync {
     ) -> impl Future<Output = Result<(), ScanError>> + Send;
 
     /// Check free space at the given path, returning available bytes.
-    fn check_free_space(
-        &self,
-        path: &Path,
-    ) -> impl Future<Output = Result<u64, SpaceError>> + Send;
+    fn check_free_space(&self, path: &Path)
+    -> impl Future<Output = Result<u64, SpaceError>> + Send;
 
     /// Create a hard link from `src` to `dst`.
     fn create_hard_link(

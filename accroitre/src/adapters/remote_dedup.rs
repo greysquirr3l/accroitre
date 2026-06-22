@@ -434,10 +434,7 @@ fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::with_capacity(hex.len() / 2);
     let mut chars = hex.chars();
 
-    loop {
-        let Some(hi) = chars.next() else {
-            break;
-        };
+    while let Some(hi) = chars.next() {
         let lo = chars.next()?;
         let hi = hi.to_digit(16)?;
         let lo = lo.to_digit(16)?;
@@ -449,12 +446,6 @@ fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 mod tests {
     use super::*;
 
@@ -519,9 +510,12 @@ mod tests {
 
         let batches = build_path_batches(&entries, "/root", 5);
         assert_eq!(batches.len(), 3); // 5 + 5 + 2
-        assert_eq!(batches[0].len(), 5);
-        assert_eq!(batches[1].len(), 5);
-        assert_eq!(batches[2].len(), 2);
+        let b0 = batches.first().map_or(0, Vec::len);
+        let b1 = batches.get(1).map_or(0, Vec::len);
+        let b2 = batches.get(2).map_or(0, Vec::len);
+        assert_eq!(b0, 5);
+        assert_eq!(b1, 5);
+        assert_eq!(b2, 2);
     }
 
     #[test]

@@ -108,7 +108,10 @@ impl TuiProgress {
 
     // ── Phase transitions ─────────────────────────────────────────────────
 
-    #[allow(clippy::literal_string_with_formatting_args)]
+    #[allow(
+        clippy::literal_string_with_formatting_args,
+        reason = "ProgressStyle::with_template consumes the literal {spinner}/{prefix}/{msg} placeholders at runtime; clippy does not recognise it as a format macro."
+    )]
     fn enter_scanning(&self, state: &mut TuiState) {
         let spinner = self.mp.add(ProgressBar::new_spinner());
         spinner.set_style(
@@ -122,7 +125,6 @@ impl TuiProgress {
         state.phase = Phase::Scanning;
     }
 
-    #[allow(clippy::literal_string_with_formatting_args)]
     fn enter_hash_or_copy_or_verify(
         &self,
         state: &mut TuiState,
@@ -153,12 +155,7 @@ impl TuiProgress {
         state.phase = phase;
     }
 
-    #[allow(clippy::literal_string_with_formatting_args)]
-    fn enter_verify(
-        &self,
-        state: &mut TuiState,
-        total_files: u64,
-    ) {
+    fn enter_verify(&self, state: &mut TuiState, total_files: u64) {
         if let Some(bar) = state.scanner_bar.take() {
             bar.finish_and_clear();
         }
@@ -186,10 +183,17 @@ impl TuiProgress {
 #[must_use]
 pub fn format_summary(summary: &RunSummary, elapsed: std::time::Duration) -> String {
     let speed = if elapsed.as_secs_f64() > 0.0 {
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "Display-only throughput; u64 precision below ~9 PiB/sec is irrelevant for human reading."
+        )]
         let bps = summary.bytes_copied as f64 / elapsed.as_secs_f64();
         // bps is guaranteed non-negative; truncation toward zero is acceptable.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "Truncating f64 throughput to u64 is intentional for HumanBytes formatting; bps ≥ 0 by construction."
+        )]
         let bps_u64 = bps as u64;
         format!("{}/s", HumanBytes(bps_u64))
     } else {
@@ -228,10 +232,7 @@ impl ProgressPort for TuiProgress {
                     self.enter_scanning(&mut state);
                 }
                 if let Some(bar) = &state.scanner_bar {
-                    bar.set_message(format!(
-                        "{files_found} files — {}",
-                        current_dir.display()
-                    ));
+                    bar.set_message(format!("{files_found} files — {}", current_dir.display()));
                 }
                 state.summary.files_total = *files_found;
             }
@@ -335,13 +336,6 @@ impl ProgressPort for TuiProgress {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    clippy::significant_drop_tightening
-)]
 mod tests {
     use super::*;
     use std::path::Path;
@@ -411,6 +405,11 @@ mod tests {
 
     #[test]
     fn phase_transitions_update_state() {
+        fn lock_phase(tui: &TuiProgress) -> Phase {
+            // Lock poisoning in a test is unexpected; default to Idle on error.
+            tui.state.lock().map_or(Phase::Idle, |g| g.phase)
+        }
+
         let tui = TuiProgress::new(true);
 
         // Scanning
@@ -418,10 +417,7 @@ mod tests {
             files_found: 1,
             current_dir: Path::new("/a"),
         });
-        {
-            let state = tui.state.lock().unwrap();
-            assert_eq!(state.phase, Phase::Scanning);
-        }
+        assert_eq!(lock_phase(&tui), Phase::Scanning);
 
         // Hashing
         tui.update(&ProgressUpdate::HashProgress {
@@ -430,10 +426,7 @@ mod tests {
             bytes_hashed: 0,
             bytes_total: 1000,
         });
-        {
-            let state = tui.state.lock().unwrap();
-            assert_eq!(state.phase, Phase::Hashing);
-        }
+        assert_eq!(lock_phase(&tui), Phase::Hashing);
 
         // Copy
         tui.update(&ProgressUpdate::CopyProgress {
@@ -442,26 +435,17 @@ mod tests {
             bytes_copied: 0,
             bytes_total: 1000,
         });
-        {
-            let state = tui.state.lock().unwrap();
-            assert_eq!(state.phase, Phase::Copying);
-        }
+        assert_eq!(lock_phase(&tui), Phase::Copying);
 
         // Verify
         tui.update(&ProgressUpdate::VerifyProgress {
             files_verified: 0,
             files_total: 10,
         });
-        {
-            let state = tui.state.lock().unwrap();
-            assert_eq!(state.phase, Phase::Verifying);
-        }
+        assert_eq!(lock_phase(&tui), Phase::Verifying);
 
         // Phase complete → Idle
         tui.update(&ProgressUpdate::PhaseComplete { phase: "verify" });
-        {
-            let state = tui.state.lock().unwrap();
-            assert_eq!(state.phase, Phase::Idle);
-        }
+        assert_eq!(lock_phase(&tui), Phase::Idle);
     }
 }

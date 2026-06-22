@@ -30,14 +30,9 @@ pub enum ProgressUpdate<'a> {
         files_total: u64,
     },
     /// A phase has completed.
-    PhaseComplete {
-        phase: &'a str,
-    },
+    PhaseComplete { phase: &'a str },
     /// An error occurred on a specific file (non-fatal).
-    FileError {
-        path: &'a Path,
-        message: &'a str,
-    },
+    FileError { path: &'a Path, message: &'a str },
 }
 
 /// Port for reporting progress to the UI layer.

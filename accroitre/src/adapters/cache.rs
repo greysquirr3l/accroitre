@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use tracing::{debug, info};
 
 use crate::domain::Hash;
@@ -96,10 +96,7 @@ impl SqliteCache {
             return Ok(None);
         }
 
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CacheError::Lock)?;
+        let conn = self.conn.lock().map_err(|_| CacheError::Lock)?;
 
         let path_str = path.to_string_lossy();
 
@@ -107,14 +104,7 @@ impl SqliteCache {
             .query_row(
                 "SELECT hash, algo, size, mtime FROM files WHERE path = ?1",
                 params![path_str.as_ref()],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(|e| CacheError::Query { source: e })?;
@@ -157,10 +147,7 @@ impl SqliteCache {
             return Ok(());
         }
 
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CacheError::Lock)?;
+        let conn = self.conn.lock().map_err(|_| CacheError::Lock)?;
 
         let path_str = path.to_string_lossy();
         let (hash_bytes, algo) = encode_hash(hash);
@@ -188,18 +175,12 @@ impl SqliteCache {
     /// # Errors
     ///
     /// Returns an error on database write failures.
-    pub fn store_batch(
-        &self,
-        entries: &[(PathBuf, u64, u64, Hash)],
-    ) -> Result<(), CacheError> {
+    pub fn store_batch(&self, entries: &[(PathBuf, u64, u64, Hash)]) -> Result<(), CacheError> {
         if !self.enabled || entries.is_empty() {
             return Ok(());
         }
 
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CacheError::Lock)?;
+        let conn = self.conn.lock().map_err(|_| CacheError::Lock)?;
 
         let tx = conn
             .unchecked_transaction()
@@ -228,8 +209,7 @@ impl SqliteCache {
             }
         }
 
-        tx.commit()
-            .map_err(|e| CacheError::Write { source: e })?;
+        tx.commit().map_err(|e| CacheError::Write { source: e })?;
 
         drop(conn);
 
@@ -250,10 +230,7 @@ impl SqliteCache {
             return Ok(Vec::new());
         }
 
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CacheError::Lock)?;
+        let conn = self.conn.lock().map_err(|_| CacheError::Lock)?;
 
         let mut stmt = conn
             .prepare("SELECT path FROM files")
@@ -281,14 +258,14 @@ impl SqliteCache {
             return Ok(());
         }
 
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CacheError::Lock)?;
+        let conn = self.conn.lock().map_err(|_| CacheError::Lock)?;
 
         let path_str = path.to_string_lossy();
-        conn.execute("DELETE FROM files WHERE path = ?1", params![path_str.as_ref()])
-            .map_err(|e| CacheError::Write { source: e })?;
+        conn.execute(
+            "DELETE FROM files WHERE path = ?1",
+            params![path_str.as_ref()],
+        )
+        .map_err(|e| CacheError::Write { source: e })?;
 
         drop(conn);
 
@@ -363,7 +340,6 @@ pub enum CacheError {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -377,24 +353,25 @@ mod tests {
     }
 
     #[test]
-    fn store_then_lookup_round_trip() {
-        let dir = TempDir::new().unwrap();
-        let cache = SqliteCache::open(dir.path()).unwrap();
+    fn store_then_lookup_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let cache = SqliteCache::open(dir.path())?;
 
         let path = Path::new("/test/file.txt");
         let hash = make_xxhash(0x1234_5678_9abc_def0_1234_5678_9abc_def0);
         let mtime = 1_700_000_000;
         let size = 42;
 
-        cache.store(path, mtime, size, &hash).unwrap();
-        let result = cache.lookup(path, mtime, size).unwrap();
+        cache.store(path, mtime, size, &hash)?;
+        let result = cache.lookup(path, mtime, size)?;
         assert_eq!(result, Some(hash));
+        Ok(())
     }
 
     #[test]
-    fn cache_invalidation_on_size_change() {
-        let dir = TempDir::new().unwrap();
-        let cache = SqliteCache::open(dir.path()).unwrap();
+    fn cache_invalidation_on_size_change() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let cache = SqliteCache::open(dir.path())?;
 
         let path = Path::new("/test/file.txt");
         let hash = make_xxhash(0xAAAA_BBBB_CCCC_DDDD_EEEE_FFFF_0000_1111);
@@ -402,17 +379,18 @@ mod tests {
         let original_size = 100;
         let new_size = 200;
 
-        cache.store(path, mtime, original_size, &hash).unwrap();
+        cache.store(path, mtime, original_size, &hash)?;
 
         // Lookup with different size should return None (stale).
-        let result = cache.lookup(path, mtime, new_size).unwrap();
+        let result = cache.lookup(path, mtime, new_size)?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn cache_invalidation_on_mtime_change() {
-        let dir = TempDir::new().unwrap();
-        let cache = SqliteCache::open(dir.path()).unwrap();
+    fn cache_invalidation_on_mtime_change() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let cache = SqliteCache::open(dir.path())?;
 
         let path = Path::new("/test/file.txt");
         let hash = make_blake3(0x42);
@@ -420,32 +398,34 @@ mod tests {
         let new_mtime = 1_700_001_000;
         let size = 100;
 
-        cache.store(path, original_mtime, size, &hash).unwrap();
+        cache.store(path, original_mtime, size, &hash)?;
 
         // Lookup with different mtime should return None (stale).
-        let result = cache.lookup(path, new_mtime, size).unwrap();
+        let result = cache.lookup(path, new_mtime, size)?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn disabled_cache_returns_none() {
-        let cache = SqliteCache::disabled().unwrap();
+    fn disabled_cache_returns_none() -> Result<(), Box<dyn std::error::Error>> {
+        let cache = SqliteCache::disabled()?;
 
         let path = Path::new("/test/file.txt");
         let hash = make_xxhash(0x1111_2222_3333_4444_5555_6666_7777_8888);
 
         // Store should succeed (no-op).
-        cache.store(path, 1_000_000, 50, &hash).unwrap();
+        cache.store(path, 1_000_000, 50, &hash)?;
 
         // Lookup should return None.
-        let result = cache.lookup(path, 1_000_000, 50).unwrap();
+        let result = cache.lookup(path, 1_000_000, 50)?;
         assert!(result.is_none());
+        Ok(())
     }
 
     #[test]
-    fn batch_store_multiple_entries() {
-        let dir = TempDir::new().unwrap();
-        let cache = SqliteCache::open(dir.path()).unwrap();
+    fn batch_store_multiple_entries() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let cache = SqliteCache::open(dir.path())?;
 
         let entries = vec![
             (PathBuf::from("/a.txt"), 1_000u64, 10u64, make_xxhash(1)),
@@ -453,50 +433,53 @@ mod tests {
             (PathBuf::from("/c.txt"), 3_000, 30, make_xxhash(3)),
         ];
 
-        cache.store_batch(&entries).unwrap();
+        cache.store_batch(&entries)?;
 
         assert_eq!(
-            cache.lookup(Path::new("/a.txt"), 1_000, 10).unwrap(),
+            cache.lookup(Path::new("/a.txt"), 1_000, 10)?,
             Some(make_xxhash(1))
         );
         assert_eq!(
-            cache.lookup(Path::new("/b.txt"), 2_000, 20).unwrap(),
+            cache.lookup(Path::new("/b.txt"), 2_000, 20)?,
             Some(make_blake3(2))
         );
         assert_eq!(
-            cache.lookup(Path::new("/c.txt"), 3_000, 30).unwrap(),
+            cache.lookup(Path::new("/c.txt"), 3_000, 30)?,
             Some(make_xxhash(3))
         );
+        Ok(())
     }
 
     #[test]
-    fn store_overwrites_stale_entry() {
-        let dir = TempDir::new().unwrap();
-        let cache = SqliteCache::open(dir.path()).unwrap();
+    fn store_overwrites_stale_entry() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let cache = SqliteCache::open(dir.path())?;
 
         let path = Path::new("/test/file.txt");
         let hash_v1 = make_xxhash(1);
         let hash_v2 = make_xxhash(2);
 
-        cache.store(path, 1000, 100, &hash_v1).unwrap();
-        cache.store(path, 2000, 200, &hash_v2).unwrap();
+        cache.store(path, 1000, 100, &hash_v1)?;
+        cache.store(path, 2000, 200, &hash_v2)?;
 
         // Old entry should be gone.
-        assert!(cache.lookup(path, 1000, 100).unwrap().is_none());
+        assert!(cache.lookup(path, 1000, 100)?.is_none());
         // New entry should be present.
-        assert_eq!(cache.lookup(path, 2000, 200).unwrap(), Some(hash_v2));
+        assert_eq!(cache.lookup(path, 2000, 200)?, Some(hash_v2));
+        Ok(())
     }
 
     #[test]
-    fn blake3_round_trip() {
-        let dir = TempDir::new().unwrap();
-        let cache = SqliteCache::open(dir.path()).unwrap();
+    fn blake3_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let cache = SqliteCache::open(dir.path())?;
 
         let path = Path::new("/blake3.dat");
         let hash = make_blake3(0xFF);
 
-        cache.store(path, 5000, 512, &hash).unwrap();
-        let result = cache.lookup(path, 5000, 512).unwrap();
+        cache.store(path, 5000, 512, &hash)?;
+        let result = cache.lookup(path, 5000, 512)?;
         assert_eq!(result, Some(hash));
+        Ok(())
     }
 }

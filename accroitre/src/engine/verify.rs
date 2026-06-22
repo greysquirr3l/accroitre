@@ -153,7 +153,9 @@ pub fn verify_plan(
             .collect::<Vec<_>>()
     };
 
-    let failures: Vec<VerifyError> = pool.as_ref().map_or_else(do_verify, |p| p.install(do_verify));
+    let failures: Vec<VerifyError> = pool
+        .as_ref()
+        .map_or_else(do_verify, |p| p.install(do_verify));
 
     let files_failed = failures.len() as u64;
     let files_verified = verified_count.load(Ordering::Relaxed) - files_failed;
@@ -180,7 +182,6 @@ fn build_duplicate_set(groups: &[DedupGroup]) -> HashSet<usize> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use crate::domain::{CopyPlan, DedupGroup, FileEntry, HashAlgorithm};
@@ -189,23 +190,27 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn make_file(dir: &std::path::Path, name: &str, content: &[u8]) -> std::path::PathBuf {
+    fn make_file(
+        dir: &std::path::Path,
+        name: &str,
+        content: &[u8],
+    ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
         let path = dir.join(name);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).ok();
+            fs::create_dir_all(parent)?;
         }
-        fs::write(&path, content).expect("write test file");
-        path
+        fs::write(&path, content)?;
+        Ok(path)
     }
 
     #[test]
-    fn verification_passes_for_correct_copies() {
-        let src_dir = TempDir::new().expect("tempdir");
-        let dst_dir = TempDir::new().expect("tempdir");
+    fn verification_passes_for_correct_copies() -> Result<(), Box<dyn std::error::Error>> {
+        let src_dir = TempDir::new()?;
+        let dst_dir = TempDir::new()?;
 
         let content = b"hello verification";
-        let src_path = make_file(src_dir.path(), "a.txt", content);
-        let dst_path = make_file(dst_dir.path(), "a.txt", content);
+        let src_path = make_file(src_dir.path(), "a.txt", content)?;
+        let dst_path = make_file(dst_dir.path(), "a.txt", content)?;
         let _ = dst_path;
 
         let hash = hash_bytes(content, HashAlgorithm::XxHash128);
@@ -231,17 +236,18 @@ mod tests {
         assert_eq!(result.files_verified, 1);
         assert_eq!(result.files_failed, 0);
         assert!(result.failures.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn verification_detects_corrupted_file() {
-        let src_dir = TempDir::new().expect("tempdir");
-        let dst_dir = TempDir::new().expect("tempdir");
+    fn verification_detects_corrupted_file() -> Result<(), Box<dyn std::error::Error>> {
+        let src_dir = TempDir::new()?;
+        let dst_dir = TempDir::new()?;
 
         let original = b"original content";
         let corrupted = b"CORRUPTED content";
-        let src_path = make_file(src_dir.path(), "b.txt", original);
-        let _dst_path = make_file(dst_dir.path(), "b.txt", corrupted);
+        let src_path = make_file(src_dir.path(), "b.txt", original)?;
+        let _dst_path = make_file(dst_dir.path(), "b.txt", corrupted)?;
 
         let hash = hash_bytes(original, HashAlgorithm::XxHash128);
 
@@ -265,25 +271,30 @@ mod tests {
 
         assert_eq!(result.files_failed, 1);
         assert!(!result.failures.is_empty());
+        let first = result
+            .failures
+            .first()
+            .ok_or("expected at least one failure")?;
         assert!(matches!(
-            &result.failures[0],
+            first,
             VerifyError::SizeMismatch { .. } | VerifyError::HashMismatch { .. }
         ));
+        Ok(())
     }
 
     #[test]
-    fn hard_linked_files_verified_only_once() {
-        let src_dir = TempDir::new().expect("tempdir");
-        let dst_dir = TempDir::new().expect("tempdir");
+    fn hard_linked_files_verified_only_once() -> Result<(), Box<dyn std::error::Error>> {
+        let src_dir = TempDir::new()?;
+        let dst_dir = TempDir::new()?;
 
         let content = b"duplicate content";
-        let src_a = make_file(src_dir.path(), "a.txt", content);
-        let src_b = make_file(src_dir.path(), "b.txt", content);
-        let _dst_a = make_file(dst_dir.path(), "a.txt", content);
+        let src_a = make_file(src_dir.path(), "a.txt", content)?;
+        let src_b = make_file(src_dir.path(), "b.txt", content)?;
+        let _dst_a = make_file(dst_dir.path(), "a.txt", content)?;
 
         // Create hard link for b -> a at destination.
         let dst_b = dst_dir.path().join("b.txt");
-        fs::hard_link(dst_dir.path().join("a.txt"), &dst_b).expect("hard link");
+        fs::hard_link(dst_dir.path().join("a.txt"), &dst_b)?;
 
         let hash = hash_bytes(content, HashAlgorithm::XxHash128);
 
@@ -322,5 +333,6 @@ mod tests {
         assert_eq!(result.files_verified, 1);
         assert_eq!(result.duplicates_skipped, 1);
         assert_eq!(result.files_failed, 0);
+        Ok(())
     }
 }

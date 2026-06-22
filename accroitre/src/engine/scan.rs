@@ -297,10 +297,8 @@ async fn get_physical_offset(_path: &Path) -> Result<Option<u64>, ScanError> {
 async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        super::windows_io::get_ntfs_physical_offset(&path).map_err(|e| ScanError::PhysicalOffset {
-            path,
-            source: e,
-        })
+        super::windows_io::get_ntfs_physical_offset(&path)
+            .map_err(|e| ScanError::PhysicalOffset { path, source: e })
     })
     .await
     .map_err(|e| ScanError::PhysicalOffset {
@@ -310,7 +308,6 @@ async fn get_physical_offset(path: &Path) -> Result<Option<u64>, ScanError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use std::fs;
 
@@ -319,41 +316,38 @@ mod tests {
     use super::*;
     use crate::ports::NullProgress;
 
-    fn runtime() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread()
+    fn runtime() -> Result<tokio::runtime::Runtime, Box<dyn std::error::Error>> {
+        Ok(tokio::runtime::Builder::new_current_thread()
             .enable_all()
-            .build()
-            .expect("test runtime")
+            .build()?)
     }
 
     #[test]
-    fn scan_empty_directory() {
-        let rt = runtime();
+    fn scan_empty_directory() -> Result<(), Box<dyn std::error::Error>> {
+        let rt = runtime()?;
         rt.block_on(async {
-            let tmp = TempDir::new().expect("tempdir");
-            let result = scan_tree(tmp.path(), &ScanConfig::default(), &NullProgress).await;
-            let result = result.expect("scan should succeed");
+            let tmp = TempDir::new()?;
+            let result = scan_tree(tmp.path(), &ScanConfig::default(), &NullProgress).await?;
             assert!(result.entries.is_empty());
             assert!(result.errors.is_empty());
-        });
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 
     #[test]
-    fn scan_known_structure() {
-        let rt = runtime();
+    fn scan_known_structure() -> Result<(), Box<dyn std::error::Error>> {
+        let rt = runtime()?;
         rt.block_on(async {
-            let tmp = TempDir::new().expect("tempdir");
+            let tmp = TempDir::new()?;
             let root = tmp.path();
 
             // Create a known directory structure.
-            fs::create_dir_all(root.join("subdir")).expect("mkdir");
-            fs::write(root.join("a.txt"), "hello").expect("write");
-            fs::write(root.join("b.txt"), "world").expect("write");
-            fs::write(root.join("subdir/c.txt"), "nested").expect("write");
+            fs::create_dir_all(root.join("subdir"))?;
+            fs::write(root.join("a.txt"), "hello")?;
+            fs::write(root.join("b.txt"), "world")?;
+            fs::write(root.join("subdir/c.txt"), "nested")?;
 
-            let result = scan_tree(root, &ScanConfig::default(), &NullProgress)
-                .await
-                .expect("scan should succeed");
+            let result = scan_tree(root, &ScanConfig::default(), &NullProgress).await?;
 
             assert_eq!(result.entries.len(), 3);
             assert!(result.errors.is_empty());
@@ -363,31 +357,27 @@ mod tests {
             assert!(paths.contains(&root.join("a.txt")));
             assert!(paths.contains(&root.join("b.txt")));
             assert!(paths.contains(&root.join("subdir/c.txt")));
-        });
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 
     #[test]
-    fn scan_exclude_patterns() {
-        let rt = runtime();
+    fn scan_exclude_patterns() -> Result<(), Box<dyn std::error::Error>> {
+        let rt = runtime()?;
         rt.block_on(async {
-            let tmp = TempDir::new().expect("tempdir");
+            let tmp = TempDir::new()?;
             let root = tmp.path();
 
-            fs::write(root.join("keep.txt"), "yes").expect("write");
-            fs::write(root.join("skip.log"), "no").expect("write");
-            fs::write(root.join("skip.tmp"), "no").expect("write");
+            fs::write(root.join("keep.txt"), "yes")?;
+            fs::write(root.join("skip.log"), "no")?;
+            fs::write(root.join("skip.tmp"), "no")?;
 
             let config = ScanConfig {
-                exclude_patterns: vec![
-                    Pattern::new("*.log").expect("pattern"),
-                    Pattern::new("*.tmp").expect("pattern"),
-                ],
+                exclude_patterns: vec![Pattern::new("*.log")?, Pattern::new("*.tmp")?],
                 follow_symlinks: true,
             };
 
-            let result = scan_tree(root, &config, &NullProgress)
-                .await
-                .expect("scan should succeed");
+            let result = scan_tree(root, &config, &NullProgress).await?;
 
             assert_eq!(result.entries.len(), 1);
             assert!(
@@ -396,12 +386,13 @@ mod tests {
                     .first()
                     .is_some_and(|e| e.path.ends_with("keep.txt"))
             );
-        });
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 
     #[test]
-    fn scan_nonexistent_source_returns_error() {
-        let rt = runtime();
+    fn scan_nonexistent_source_returns_error() -> Result<(), Box<dyn std::error::Error>> {
+        let rt = runtime()?;
         rt.block_on(async {
             let result = scan_tree(
                 Path::new("/nonexistent/path/that/does/not/exist"),
@@ -411,24 +402,25 @@ mod tests {
             .await;
 
             assert!(result.is_err());
-            let err = result.unwrap_err();
-            matches!(err, ScanError::SourceNotFound(_));
-        });
+            let err = result.err().ok_or("expected error")?;
+            if !matches!(err, ScanError::SourceNotFound(_)) {
+                return Err(format!("expected SourceNotFound, got {err:?}").into());
+            }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 
     #[test]
-    fn scan_collects_file_sizes() {
-        let rt = runtime();
+    fn scan_collects_file_sizes() -> Result<(), Box<dyn std::error::Error>> {
+        let rt = runtime()?;
         rt.block_on(async {
-            let tmp = TempDir::new().expect("tempdir");
+            let tmp = TempDir::new()?;
             let root = tmp.path();
 
-            fs::write(root.join("small.txt"), "hi").expect("write");
-            fs::write(root.join("bigger.txt"), "hello world, this is bigger").expect("write");
+            fs::write(root.join("small.txt"), "hi")?;
+            fs::write(root.join("bigger.txt"), "hello world, this is bigger")?;
 
-            let result = scan_tree(root, &ScanConfig::default(), &NullProgress)
-                .await
-                .expect("scan should succeed");
+            let result = scan_tree(root, &ScanConfig::default(), &NullProgress).await?;
 
             assert_eq!(result.entries.len(), 2);
             // Find each file and check sizes.
@@ -439,25 +431,23 @@ mod tests {
                     assert_eq!(entry.size, 27);
                 }
             }
-        });
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 
     #[test]
-    fn scan_entries_sorted_by_physical_offset() {
-        let rt = runtime();
+    fn scan_entries_sorted_by_physical_offset() -> Result<(), Box<dyn std::error::Error>> {
+        let rt = runtime()?;
         rt.block_on(async {
-            let tmp = TempDir::new().expect("tempdir");
+            let tmp = TempDir::new()?;
             let root = tmp.path();
 
             // Create several files.
             for i in 0..5 {
-                fs::write(root.join(format!("file_{i}.txt")), format!("content {i}"))
-                    .expect("write");
+                fs::write(root.join(format!("file_{i}.txt")), format!("content {i}"))?;
             }
 
-            let result = scan_tree(root, &ScanConfig::default(), &NullProgress)
-                .await
-                .expect("scan should succeed");
+            let result = scan_tree(root, &ScanConfig::default(), &NullProgress).await?;
 
             assert_eq!(result.entries.len(), 5);
 
@@ -471,24 +461,30 @@ mod tests {
                     assert!(a_off <= b_off);
                 }
             }
-        });
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 
     #[test]
-    fn is_excluded_matches_filename() {
-        let pattern = Pattern::new("*.log").expect("pattern");
+    fn is_excluded_matches_filename() -> Result<(), Box<dyn std::error::Error>> {
+        let pattern = Pattern::new("*.log")?;
         let root = Path::new("/root");
         assert!(is_excluded(
             Path::new("/root/test.log"),
             root,
             std::slice::from_ref(&pattern)
         ));
-        assert!(!is_excluded(Path::new("/root/test.txt"), root, std::slice::from_ref(&pattern)));
+        assert!(!is_excluded(
+            Path::new("/root/test.txt"),
+            root,
+            std::slice::from_ref(&pattern)
+        ));
+        Ok(())
     }
 
     #[test]
-    fn is_excluded_matches_relative_path() {
-        let pattern = Pattern::new("subdir/*.log").expect("pattern");
+    fn is_excluded_matches_relative_path() -> Result<(), Box<dyn std::error::Error>> {
+        let pattern = Pattern::new("subdir/*.log")?;
         let root = Path::new("/root");
         assert!(is_excluded(
             Path::new("/root/subdir/test.log"),
@@ -500,30 +496,30 @@ mod tests {
             root,
             std::slice::from_ref(&pattern)
         ));
+        Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn scan_collects_permissions() {
+    fn scan_collects_permissions() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::PermissionsExt;
 
-        let rt = runtime();
+        let rt = runtime()?;
         rt.block_on(async {
-            let tmp = TempDir::new().expect("tempdir");
+            let tmp = TempDir::new()?;
             let root = tmp.path();
 
             let file_path = root.join("perms.txt");
-            fs::write(&file_path, "test").expect("write");
-            fs::set_permissions(&file_path, fs::Permissions::from_mode(0o755)).expect("chmod");
+            fs::write(&file_path, "test")?;
+            fs::set_permissions(&file_path, fs::Permissions::from_mode(0o755))?;
 
-            let result = scan_tree(root, &ScanConfig::default(), &NullProgress)
-                .await
-                .expect("scan should succeed");
+            let result = scan_tree(root, &ScanConfig::default(), &NullProgress).await?;
 
             assert_eq!(result.entries.len(), 1);
-            let entry = result.entries.first().expect("one entry");
+            let entry = result.entries.first().ok_or("expected one entry")?;
             // Check that permission bits include the executable bit.
             assert_ne!(entry.permissions & 0o111, 0);
-        });
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
     }
 }

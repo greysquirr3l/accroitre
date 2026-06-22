@@ -484,8 +484,8 @@ fn shell_escape(s: &str) -> String {
 
 /// Compress data with gzip.
 fn compress_gzip(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
 
     let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
     encoder.write_all(data)?;
@@ -504,59 +504,54 @@ fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn make_test_entries(dir: &Path, count: usize, size: u64) -> Vec<FileEntry> {
+    fn make_test_entries(
+        dir: &Path,
+        count: usize,
+        size: u64,
+    ) -> Result<Vec<FileEntry>, Box<dyn std::error::Error>> {
         let mut entries = Vec::new();
         for i in 0..count {
             let path = dir.join(format!("file_{i}.dat"));
-            let data = vec![i as u8; size as usize];
-            std::fs::write(&path, &data).ok();
+            let byte = u8::try_from(i).map_err(|e| format!("count must be < 256: {e}"))?;
+            let len = usize::try_from(size).map_err(|e| format!("size must fit in usize: {e}"))?;
+            let data = vec![byte; len];
+            std::fs::write(&path, &data)?;
             entries.push(FileEntry::new(path, size));
         }
-        entries
+        Ok(entries)
     }
 
     #[test]
-    fn build_batches_single_batch() {
-        let dir = TempDir::new().ok();
-        let dir_ref = dir.as_ref().map(TempDir::path);
-        let Some(dir_path) = dir_ref else {
-            return;
-        };
+    fn build_batches_single_batch() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let dir_path = dir.path();
 
-        let entries = make_test_entries(dir_path, 5, 100);
+        let entries = make_test_entries(dir_path, 5, 100)?;
         let batches = build_batches(&entries, 1000);
         assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0].indices.len(), 5);
-        assert_eq!(batches[0].total_size, 500);
+        let first = batches.first().ok_or("expected one batch")?;
+        assert_eq!(first.indices.len(), 5);
+        assert_eq!(first.total_size, 500);
+        Ok(())
     }
 
     #[test]
-    fn build_batches_multiple_batches() {
-        let dir = TempDir::new().ok();
-        let dir_ref = dir.as_ref().map(TempDir::path);
-        let Some(dir_path) = dir_ref else {
-            return;
-        };
+    fn build_batches_multiple_batches() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let dir_path = dir.path();
 
-        let entries = make_test_entries(dir_path, 10, 100);
+        let entries = make_test_entries(dir_path, 10, 100)?;
         let batches = build_batches(&entries, 350);
 
         // 4 files × 100 = 400 >= 350 → batch 1
         // 4 files × 100 = 400 >= 350 → batch 2
         // 2 files × 100 = 200 < 350 → batch 3 (remainder)
         assert_eq!(batches.len(), 3);
+        Ok(())
     }
 
     #[test]
@@ -567,62 +562,38 @@ mod tests {
     }
 
     #[test]
-    fn tar_round_trip() {
-        let src_dir = TempDir::new().ok();
-        let src_ref = src_dir.as_ref().map(TempDir::path);
-        let Some(src_path) = src_ref else {
-            return;
-        };
+    fn tar_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let src_dir = TempDir::new()?;
+        let src_path = src_dir.path();
 
-        let entries = make_test_entries(src_path, 3, 256);
+        let entries = make_test_entries(src_path, 3, 256)?;
 
-        let archive = create_tar_archive(&entries, src_path);
-        assert!(archive.is_ok());
-        let archive_data = archive.ok();
-        let Some(ref data) = archive_data else {
-            return;
-        };
+        let archive_data = create_tar_archive(&entries, src_path)?;
 
-        let dest_dir = TempDir::new().ok();
-        let dest_ref = dest_dir.as_ref().map(TempDir::path);
-        let Some(dest_path) = dest_ref else {
-            return;
-        };
+        let dest_dir = TempDir::new()?;
+        let dest_path = dest_dir.path();
 
-        let result = extract_tar_archive(data, dest_path);
-        assert!(result.is_ok());
+        extract_tar_archive(&archive_data, dest_path)?;
 
         // Verify files were extracted.
         for i in 0..3 {
             let extracted = dest_path.join(format!("file_{i}.dat"));
             assert!(extracted.exists(), "file_{i}.dat should exist");
-            let content = std::fs::read(&extracted).ok();
-            let Some(ref bytes) = content else {
-                panic!("could not read file_{i}.dat");
-            };
+            let bytes = std::fs::read(&extracted)?;
             assert_eq!(bytes.len(), 256);
-            assert!(bytes.iter().all(|&b| b == i as u8));
+            let expected = u8::try_from(i).map_err(|e| format!("loop index fits in u8: {e}"))?;
+            assert!(bytes.iter().all(|&b| b == expected));
         }
+        Ok(())
     }
 
     #[test]
-    fn gzip_round_trip() {
+    fn gzip_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let original = b"hello world, this is a test of gzip compression";
-        let compressed = compress_gzip(original);
-        assert!(compressed.is_ok());
-        let compressed_data = compressed.ok();
-        let Some(ref cdata) = compressed_data else {
-            return;
-        };
-
-        let decompressed = decompress_gzip(cdata);
-        assert!(decompressed.is_ok());
-        let decompressed_data = decompressed.ok();
-        let Some(ref ddata) = decompressed_data else {
-            return;
-        };
-
+        let cdata = compress_gzip(original)?;
+        let ddata = decompress_gzip(&cdata)?;
         assert_eq!(ddata.as_slice(), original);
+        Ok(())
     }
 
     #[test]

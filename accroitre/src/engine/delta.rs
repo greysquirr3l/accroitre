@@ -173,7 +173,6 @@ fn collect_dest_files(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use std::fs;
@@ -191,40 +190,39 @@ mod tests {
     }
 
     #[test]
-    fn new_files_are_changed() {
-        let tmp = TempDir::new().unwrap();
+    fn new_files_are_changed() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
-        fs::create_dir_all(&src).unwrap();
-        fs::create_dir_all(&dst).unwrap();
+        fs::create_dir_all(&src)?;
+        fs::create_dir_all(&dst)?;
 
-        fs::write(src.join("new.txt"), "hello").unwrap();
+        fs::write(src.join("new.txt"), "hello")?;
 
         let entries = vec![make_entry(&src.join("new.txt"), 5, Some(1_000_000))];
         let result = compute_delta(entries, &src, &dst);
 
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.unchanged_count, 0);
+        Ok(())
     }
 
     #[test]
-    fn unchanged_files_are_skipped() {
-        let tmp = TempDir::new().unwrap();
+    fn unchanged_files_are_skipped() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
-        fs::create_dir_all(&src).unwrap();
-        fs::create_dir_all(&dst).unwrap();
+        fs::create_dir_all(&src)?;
+        fs::create_dir_all(&dst)?;
 
-        fs::write(src.join("same.txt"), "hello").unwrap();
-        fs::write(dst.join("same.txt"), "hello").unwrap();
+        fs::write(src.join("same.txt"), "hello")?;
+        fs::write(dst.join("same.txt"), "hello")?;
 
         // Get actual mtime from the destination file.
-        let meta = fs::metadata(dst.join("same.txt")).unwrap();
+        let meta = fs::metadata(dst.join("same.txt"))?;
         let mtime = meta
-            .modified()
-            .unwrap()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
         let entries = vec![make_entry(&src.join("same.txt"), 5, Some(mtime))];
@@ -232,25 +230,24 @@ mod tests {
 
         assert_eq!(result.changed.len(), 0);
         assert_eq!(result.unchanged_count, 1);
+        Ok(())
     }
 
     #[test]
-    fn size_change_is_detected() {
-        let tmp = TempDir::new().unwrap();
+    fn size_change_is_detected() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
-        fs::create_dir_all(&src).unwrap();
-        fs::create_dir_all(&dst).unwrap();
+        fs::create_dir_all(&src)?;
+        fs::create_dir_all(&dst)?;
 
-        fs::write(src.join("changed.txt"), "longer content").unwrap();
-        fs::write(dst.join("changed.txt"), "short").unwrap();
+        fs::write(src.join("changed.txt"), "longer content")?;
+        fs::write(dst.join("changed.txt"), "short")?;
 
-        let meta = fs::metadata(dst.join("changed.txt")).unwrap();
+        let meta = fs::metadata(dst.join("changed.txt"))?;
         let mtime = meta
-            .modified()
-            .unwrap()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
         // Source reports different size.
@@ -258,63 +255,68 @@ mod tests {
         let result = compute_delta(entries, &src, &dst);
 
         assert_eq!(result.changed.len(), 1);
+        Ok(())
     }
 
     #[test]
-    fn orphans_found_and_deleted() {
-        let tmp = TempDir::new().unwrap();
+    fn orphans_found_and_deleted() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
-        fs::create_dir_all(&src).unwrap();
-        fs::create_dir_all(&dst).unwrap();
+        fs::create_dir_all(&src)?;
+        fs::create_dir_all(&dst)?;
 
         // Source has only one file.
-        fs::write(src.join("keep.txt"), "keep").unwrap();
+        fs::write(src.join("keep.txt"), "keep")?;
         // Destination has the file plus an orphan.
-        fs::write(dst.join("keep.txt"), "keep").unwrap();
-        fs::write(dst.join("orphan.txt"), "go away").unwrap();
+        fs::write(dst.join("keep.txt"), "keep")?;
+        fs::write(dst.join("orphan.txt"), "go away")?;
 
         let entries = vec![make_entry(&src.join("keep.txt"), 4, Some(1_000_000))];
         let orphans = find_orphans(&entries, &src, &dst);
 
         assert_eq!(orphans.len(), 1);
-        assert!(orphans[0].ends_with("orphan.txt"));
+        let first = orphans.first().ok_or("orphans was empty")?;
+        assert!(first.ends_with("orphan.txt"));
 
         let deleted = delete_orphans(&orphans);
         assert_eq!(deleted, 1);
         assert!(!dst.join("orphan.txt").exists());
+        Ok(())
     }
 
     #[test]
-    fn metadata_files_excluded_from_orphans() {
-        let tmp = TempDir::new().unwrap();
+    fn metadata_files_excluded_from_orphans() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
-        fs::create_dir_all(&src).unwrap();
-        fs::create_dir_all(&dst).unwrap();
+        fs::create_dir_all(&src)?;
+        fs::create_dir_all(&dst)?;
 
-        fs::write(dst.join(".accroitre-cache.db"), "db").unwrap();
-        fs::write(dst.join(".accroitre-manifest.json"), "{}").unwrap();
+        fs::write(dst.join(".accroitre-cache.db"), "db")?;
+        fs::write(dst.join(".accroitre-manifest.json"), "{}")?;
 
         let orphans = find_orphans(&[], &src, &dst);
         assert!(orphans.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn mtime_change_is_detected() {
-        let tmp = TempDir::new().unwrap();
+    fn mtime_change_is_detected() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = TempDir::new()?;
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
-        fs::create_dir_all(&src).unwrap();
-        fs::create_dir_all(&dst).unwrap();
+        fs::create_dir_all(&src)?;
+        fs::create_dir_all(&dst)?;
 
-        fs::write(src.join("file.txt"), "hello").unwrap();
-        fs::write(dst.join("file.txt"), "hello").unwrap();
+        fs::write(src.join("file.txt"), "hello")?;
+        fs::write(dst.join("file.txt"), "hello")?;
 
         // Source reports a different mtime than what's on disk.
         let entries = vec![make_entry(&src.join("file.txt"), 5, Some(999_999))];
         let result = compute_delta(entries, &src, &dst);
 
         assert_eq!(result.changed.len(), 1);
+        Ok(())
     }
 }

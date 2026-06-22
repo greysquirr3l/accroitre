@@ -187,13 +187,6 @@ pub enum SpaceError {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    clippy::items_after_statements
-)]
 mod tests {
     use super::*;
 
@@ -257,14 +250,15 @@ mod tests {
     }
 
     #[test]
-    fn error_source_chain() {
+    fn scan_error_source_chain() {
+        use std::error::Error;
+
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
         let err = ScanError::ReadDir {
             path: PathBuf::from("/secret"),
             source: io_err,
         };
         // Verify source() returns the underlying io::Error
-        use std::error::Error;
         assert!(err.source().is_some());
     }
 }

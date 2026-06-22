@@ -15,10 +15,8 @@ pub trait SshPort: Send + Sync {
     ) -> impl Future<Output = Result<(), SshError>> + Send;
 
     /// Execute a command on the remote host and return its stdout.
-    fn exec_command(
-        &self,
-        command: &str,
-    ) -> impl Future<Output = Result<Vec<u8>, SshError>> + Send;
+    fn exec_command(&self, command: &str)
+    -> impl Future<Output = Result<Vec<u8>, SshError>> + Send;
 
     /// Stream a tar archive of the given entries to the remote host.
     fn stream_tar_upload(

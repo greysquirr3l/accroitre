@@ -191,7 +191,10 @@ pub struct CopyStats {
 impl CopyStats {
     /// Throughput in bytes per second, or `None` if elapsed is zero.
     #[must_use]
-    #[allow(clippy::cast_precision_loss)] // acceptable: throughput display doesn't need u64 precision
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "Display-only throughput; u64 precision below ~9 PiB/sec is irrelevant for human reading."
+    )]
     pub fn throughput_bps(&self) -> Option<f64> {
         let secs = self.elapsed.as_secs_f64();
         if secs > 0.0 {
@@ -203,12 +206,6 @@ impl CopyStats {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 mod tests {
     use super::*;
 
