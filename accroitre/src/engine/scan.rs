@@ -186,7 +186,14 @@ const fn get_permissions(_metadata: &std::fs::Metadata) -> u32 {
 /// On macOS: uses `fcntl(F_LOG2PHYS)` to get the physical block offset.
 /// On Linux: uses `FIEMAP` ioctl to get the physical extent offset.
 /// On other platforms: leaves offsets as `None`.
-async fn resolve_physical_offsets(entries: &mut [FileEntry], errors: &mut Vec<ScanError>) {
+///
+/// Physical offset resolution is best-effort — failures (unsupported
+/// filesystems, sandboxed CI runners without admin privileges, etc.)
+/// are debug-logged and silently degrade to `physical_offset = None`.
+/// They do NOT propagate into the scan's `errors` list, because that
+/// list is for *scan failures* (cannot walk or stat a file), not for
+/// *optimization hint* failures.
+async fn resolve_physical_offsets(entries: &mut [FileEntry], _errors: &mut Vec<ScanError>) {
     for entry in entries.iter_mut() {
         match get_physical_offset(&entry.path).await {
             Ok(offset) => entry.physical_offset = offset,
@@ -195,7 +202,6 @@ async fn resolve_physical_offsets(entries: &mut [FileEntry], errors: &mut Vec<Sc
                     "could not get physical offset for {}: {e}",
                     entry.path.display()
                 );
-                errors.push(e);
             }
         }
     }
