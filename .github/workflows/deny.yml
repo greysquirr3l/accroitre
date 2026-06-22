@@ -16,22 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.96.0"
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-deny
+      # The Embark action runs cargo-deny inside its own Docker
+      # container, so a follow-up `run:` step cannot reach the binary.
+      # Pass everything through the action's inputs instead.
+      # `rust-version` updates the toolchain inside the container
+      # before cargo-deny runs; the workspace requires 1.96.0.
+      - name: Run cargo-deny
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           rust-version: "1.96.0"
-
-      - name: Run cargo-deny
-        # The Embark action installs the binary at ${CARGO_HOME}/bin/cargo-deny
-        # but does not add it to PATH for subsequent steps. Invoke via the
-        # explicit path. The binary itself is named 'cargo-deny' (not the
-        # 'cargo deny' subcommand alias).
-        run: ${CARGO_HOME}/bin/cargo-deny --all-features check
+          command: check
+          arguments: --all-features
