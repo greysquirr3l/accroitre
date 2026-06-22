@@ -55,6 +55,108 @@ jobs:
             echo "Resolved tag ${tag} for commit ${sha}"
           fi
 
+  # Build the `accro` binary for the three primary targets and archive
+  # each with checksums. Archives are uploaded as workflow artifacts so
+  # the `github-release` job can attach them to the GitHub Release.
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    needs: [resolve-tag]
+    if: ${{ needs.resolve-tag.outputs.should_release == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.0"
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --bin accro --target ${{ matrix.target }} --locked
+
+      - name: Determine binary name
+        id: binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "name=accro.exe" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=accro" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine archive name
+        id: archive
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "accroitre") | .version')
+          echo "name=accro-${{ matrix.target }}-v${version}.${{ matrix.archive }}" >> "$GITHUB_OUTPUT"
+
+      - name: Stage release artifact (Unix)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp "target/${{ matrix.target }}/release/${{ steps.binary.outputs.name }}" staging/
+          cp LICENSE-MIT staging/ 2>/dev/null || cp LICENSE-MIT staging/
+          cp LICENSE-APACHE staging/
+          strip "staging/${{ steps.binary.outputs.name }}" 2>/dev/null || true
+
+      - name: Stage release artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp "target/${{ matrix.target }}/release/${{ steps.binary.outputs.name }}" staging/
+          cp LICENSE-MIT staging/
+          cp LICENSE-APACHE staging/
+
+      - name: Create tarball (Unix)
+        if: matrix.archive == 'tar.gz' && matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          tar -C staging -czf "${{ steps.archive.outputs.name }}" .
+
+      - name: Create zip (Windows)
+        if: matrix.archive == 'zip' && matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          (cd staging && 7z a "../${{ steps.archive.outputs.name }}" .) || \
+            (cd staging && powershell Compress-Archive -Path . -DestinationPath "../${{ steps.archive.outputs.name }}")
+
+      - name: Generate SHA256 checksum
+        shell: bash
+        run: |
+          sha256sum "${{ steps.archive.outputs.name }}" > "${{ steps.archive.outputs.name }}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.archive.outputs.name }}
+          path: |
+            ${{ steps.archive.outputs.name }}
+            ${{ steps.archive.outputs.name }}.sha256
+          if-no-files-found: error
+
   publish-crates:
     name: Publish to crates.io
     runs-on: ubuntu-latest
@@ -90,7 +192,7 @@ jobs:
         run: |
           CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "accroitre") | .version')
-          if cargo publish --package accroitre 2>&1 | tee /tmp/publish.log; then
+          if cargo publish --package accroitre --locked 2>&1 | tee /tmp/publish.log; then
             echo "accroitre@$CRATE_VERSION published successfully"
           elif grep -q "already exists" /tmp/publish.log; then
             echo "accroitre@$CRATE_VERSION already published, continuing"
@@ -101,3 +203,47 @@ jobs:
           fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [resolve-tag, build-binaries, publish-crates]
+    if: ${{ needs.resolve-tag.outputs.should_release == 'true' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.sha }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Extract changelog section for this version
+        id: changelog
+        env:
+          RELEASE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          if [ -f CHANGELOG.md ]; then
+            NOTES=$(awk "/^## \[?$VERSION\]?/{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md)
+          else
+            NOTES="Release $VERSION"
+          fi
+          {
+            echo "notes<<EOF"
+            echo "${NOTES}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
+          target_commitish: ${{ needs.resolve-tag.outputs.sha }}
+          body: ${{ steps.changelog.outputs.notes }}
+          files: artifacts/**/*
+          draft: false
+          prerelease: ${{ contains(needs.resolve-tag.outputs.tag, '-alpha') || contains(needs.resolve-tag.outputs.tag, '-beta') || contains(needs.resolve-tag.outputs.tag, '-rc') }}

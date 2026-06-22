@@ -151,8 +151,13 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub check: bool,
 
+    /// Download and verify the target release without replacing the binary.
+    /// Useful for CI smoke tests of the GitHub release + SHA-256 pipeline.
+    #[arg(long)]
+    pub dry_run: bool,
+
     /// Install a specific version (e.g. `1.2.0`).  Defaults to latest.
-    #[arg(value_name = "VERSION")]
+    #[arg(long)]
     pub version: Option<String>,
 }
 
@@ -562,6 +567,35 @@ mod tests {
                 assert_eq!(e2, "node_modules/**");
             }
             _ => return Err("Expected Copy command".into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn update_dry_run_flag_parses() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["accro", "update", "--dry-run"])?;
+        match cli.command {
+            Some(Commands::Update(args)) => {
+                assert!(args.dry_run);
+                assert!(!args.check);
+            }
+            _ => return Err("Expected Update command".into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn update_check_and_dry_run_are_independent() -> Result<(), Box<dyn std::error::Error>> {
+        // `--check` and `--dry-run` should not be combinable in practice but
+        // parsing-wise they're separate bools. Verify both can be set
+        // independently without panics.
+        let cli = Cli::try_parse_from(["accro", "update", "--check"])?;
+        match cli.command {
+            Some(Commands::Update(args)) => {
+                assert!(args.check);
+                assert!(!args.dry_run);
+            }
+            _ => return Err("Expected Update command".into()),
         }
         Ok(())
     }

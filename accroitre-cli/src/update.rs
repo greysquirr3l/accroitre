@@ -18,7 +18,7 @@ const GITHUB_API_BASE: &str = "https://api.github.com";
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Execute the update command: either check-only or download-and-replace.
+/// Execute the update command: either check-only, dry-run, or download-and-replace.
 ///
 /// # Errors
 ///
@@ -55,7 +55,11 @@ pub async fn run(args: &UpdateArgs) -> Result<()> {
         return Ok(());
     }
 
-    install(target).await
+    if args.dry_run {
+        dry_run(target).await
+    } else {
+        install(target).await
+    }
 }
 
 // ── Data types ────────────────────────────────────────────────────────────────
@@ -201,6 +205,50 @@ fn check_only(current: &Version, releases: &[Release]) {
 // ── Install ───────────────────────────────────────────────────────────────────
 
 async fn install(release: &Release) -> Result<()> {
+    let binary_bytes = download_and_verify(release).await?;
+
+    // Replace the running binary.
+    let current_exe = env::current_exe().context("Cannot determine current executable path")?;
+    replace_binary(&current_exe, &binary_bytes)?;
+
+    println!("Updated to accro v{}.", release.version);
+    Ok(())
+}
+
+/// Download and verify the target release without installing it.
+///
+/// Writes the verified binary to a temp file and prints its path and SHA-256
+/// digest. Used by `--dry-run` (CI smoke test) and by tests that exercise the
+/// download + checksum pipeline without touching the running binary.
+async fn dry_run(release: &Release) -> Result<()> {
+    let binary_bytes = download_and_verify(release).await?;
+
+    let digest = compute_sha256(&binary_bytes);
+    let staging_dir = env::temp_dir();
+    let staging_path = staging_dir.join(format!(
+        "accro-{}-{}.dryrun",
+        release.version,
+        platform_asset_name()
+    ));
+    fs::write(&staging_path, &binary_bytes)
+        .with_context(|| format!("Failed to write {}", staging_path.display()))?;
+
+    println!(
+        "Dry-run complete: v{} verified, {} bytes written to {}",
+        release.version,
+        binary_bytes.len(),
+        staging_path.display()
+    );
+    println!("SHA-256: {digest}");
+
+    // Best-effort cleanup. The operator may inspect the file, so we don't
+    // remove it on exit.
+    Ok(())
+}
+
+/// Download the platform-matching binary asset, plus its SHA-256 checksum if
+/// present, and verify integrity. Returns the verified raw bytes.
+async fn download_and_verify(release: &Release) -> Result<Vec<u8>> {
     let asset_name = platform_asset_name();
     let checksum_name = format!("{asset_name}.sha256");
 
@@ -222,7 +270,6 @@ async fn install(release: &Release) -> Result<()> {
     let client = http_client()?;
     let binary_bytes = download_asset(&client, binary_asset).await?;
 
-    // Verify integrity if checksum is available.
     if let Some(cs_asset) = checksum_asset {
         let cs_bytes = download_asset(&client, cs_asset).await?;
         let expected_hex =
@@ -233,12 +280,7 @@ async fn install(release: &Release) -> Result<()> {
         eprintln!("Warning: no checksum file found — skipping integrity check.");
     }
 
-    // Replace the running binary.
-    let current_exe = env::current_exe().context("Cannot determine current executable path")?;
-    replace_binary(&current_exe, &binary_bytes)?;
-
-    println!("Updated to accro v{}.", release.version);
-    Ok(())
+    Ok(binary_bytes)
 }
 
 /// Download raw bytes for an asset.
@@ -566,5 +608,26 @@ mod tests {
         assert!(constant_time_eq(b"abc", b"abc"));
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"ab", b"abc"));
+    }
+
+    #[test]
+    fn hex_encode_handles_empty_input() {
+        assert_eq!(hex_encode(&[]), "");
+    }
+
+    #[test]
+    fn hex_encode_handles_long_input() -> Result<(), Box<dyn std::error::Error>> {
+        let input: Vec<u8> = (0..=255).collect();
+        let encoded = hex_encode(&input);
+        assert_eq!(encoded.len(), input.len() * 2);
+        // Round-trip
+        let mut decoded = Vec::with_capacity(input.len());
+        for i in (0..encoded.len()).step_by(2) {
+            let pair = encoded.get(i..i + 2).ok_or("hex pair out of range")?;
+            let byte = u8::from_str_radix(pair, 16).map_err(|e| format!("hex: {e}"))?;
+            decoded.push(byte);
+        }
+        assert_eq!(decoded, input);
+        Ok(())
     }
 }
