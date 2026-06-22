@@ -30,8 +30,8 @@ jobs:
           rust-version: "1.96.0"
 
       - name: Run cargo-deny
-        # The Embark action installs the binary at $CARGO_HOME/bin/cargo-deny
-        # but doesn't add it to PATH for subsequent steps. Invoke via the
+        # The Embark action installs the binary at ${CARGO_HOME}/bin/cargo-deny
+        # but does not add it to PATH for subsequent steps. Invoke via the
         # explicit path. The binary itself is named 'cargo-deny' (not the
         # 'cargo deny' subcommand alias).
-        run: "$CARGO_HOME/bin/cargo-deny" --all-features check
+        run: ${CARGO_HOME}/bin/cargo-deny --all-features check
