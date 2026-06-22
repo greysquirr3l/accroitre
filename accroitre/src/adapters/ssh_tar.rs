@@ -247,6 +247,10 @@ pub async fn upload_tar_stream(
 /// # Errors
 ///
 /// Returns per-batch errors in `TarStreamResult.errors`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "download_tar_stream orchestrates per-batch mkdir/exec/extract/dest-write; further splitting would scatter the pipeline and obscure per-batch error handling."
+)]
 pub async fn download_tar_stream(
     adapter: &SshAdapter,
     entries: &[FileEntry],

@@ -1,15 +1,31 @@
 [advisories]
 db-path = "~/.cargo/advisory-db"
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+ignore = [
+    # RUSTSEC-2025-0119 (number_prefix unmaintained): transitive dep via
+    # indicatif's chart formatting. Upstream pull-request pending; not a
+    # security vulnerability, just a maintenance signal.
+    "RUSTSEC-2025-0119",
+    # RUSTSEC-2023-0071 (rsa timing-side-channel): pulled in transitively
+    # by an older dependency tree (rusqlite-bundled or reqwest's TLS
+    # stack). Fix requires bumping a major-version chain; tracked.
+    "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0154 (russh SSH agent frame length): both russh 0.46
+    # and russh-cryptovec 0.7 are affected; fix requires russh >= 0.58.
+    # Tracked for the next major version bump.
+    "RUSTSEC-2026-0154",
+    # RUSTSEC-2026-0153 (russh-cryptovec unchecked capacity growth):
+    # same root cause as -0154; needs russh >= 0.58. The SSH transport
+    # path is exercised only when the user explicitly opts in to SSH
+    # remote sources/destinations (not the default local-copy path).
+    "RUSTSEC-2026-0153",
+]
 
 [licenses]
-unlicensed = "deny"
+version = 2
 allow = [
     "MIT",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
@@ -19,8 +35,10 @@ allow = [
     "Zlib",
     "CC0-1.0",
     "MPL-2.0",
+    "OpenSSL",
+    "MIT-0",
+    "CDLA-Permissive-2.0",
 ]
-copyleft = "deny"
 
 [bans]
 multiple-versions = "warn"

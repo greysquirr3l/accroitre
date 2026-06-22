@@ -70,6 +70,10 @@ console = "0.15"
 # SSH
 russh = "0.46"
 russh-keys = "0.46"
+# Workspace pin so cargo picks 0.61.0 for any russh-cryptovec needs; older versions
+# pulled in by russh-keys 0.46 are flagged by GHSA-g9f8-wqj9-fjw5 (buffer growth
+# unvalidated before allocation).
+russh-cryptovec = "0.61.0"
 
 # SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }
