@@ -136,16 +136,40 @@ Re-hashes the destination files and compares against source hashes (sizes first 
 
 ## Performance
 
-Numbers below are wall-clock for `accro copy /src /dst` over a 1 TiB tree of mixed file sizes on consumer hardware (NVMe source, HDD destination, Linux 6.x, Ryzen 7). YMMV.
+### Component throughput (measured, reproducible)
 
-| Workload | `cp -a` | `rsync -a` | `accro copy` |
-|---|---|---|---|
-| Cold HDD write, 1M small files | 4 h 12 m | 3 h 58 m | **38 m** |
-| Cold HDD write, 50 % duplicates | 2 h 05 m | 1 h 58 m | **52 m** (only writes unique) |
-| NVMe → NVMe, single 100 GiB file | 18 m 04 s | 17 m 22 s | **8 m 11 s** |
-| Local → SSH (1 Gbps), 10 GiB tree | — | 24 m | **11 m** |
+Micro-benchmarks under `accroitre/benches/` — run `cargo bench` to verify on your hardware.
+
+Measured on Apple M3 Pro (5P+6E cores, 36 GB RAM), Rust 1.96.0, single-thread:
+
+| Operation | Payload | Throughput |
+|---|---|---|
+| `xxhash-rust` xxh3-128 | 4 KiB | **38.0 GiB/s** |
+| `xxhash-rust` xxh3-128 | 1 MiB | **38.4 GiB/s** |
+| `xxhash-rust` xxh3-128 | 64 MiB | **37.5 GiB/s** |
+| `blake3` | 4 KiB | **1.90 GiB/s** |
+| `blake3` | 1 MiB | **2.00 GiB/s** |
+| `blake3` | 64 MiB | **1.97 GiB/s** |
+| `scan_tree` (synthetic 4 KiB files) | 100 files | 6,690 files/s |
+| `scan_tree` (synthetic 4 KiB files) | 1,000 files | 6,840 files/s |
+| `scan_tree` (synthetic 4 KiB files) | 10,000 files | 6,020 files/s |
+
+**xxHash-128 is ~19× faster than BLAKE3** at the cost of being non-cryptographic. Use xxHash for hot-path dedup; switch to BLAKE3 when you need cryptographic collision resistance.
+
+### End-to-end workload projections
+
+The micro-benchmarks above are upper bounds. Real workloads are dominated by I/O, dedup ratio, and the platform-optimal syscall (clonefile / copy_file_range / CoW clone). Numbers below are illustrative projections derived from the dominant mechanism:
+
+| Workload | Mechanism | Expected speedup vs `cp -a` |
+|---|---|---|
+| Cold HDD write, 1M small files | Tar-batched writes amortise per-file `open`/`write`/`close` | **~5–10×** |
+| Cold HDD write, 50 % duplicates | Hard-links skip 50 % of physical writes | **~2×** |
+| NVMe → NVMe, single large file | `copy_file_range` (Linux) / `clonefile` (macOS APFS) | **~2×** (kernel copy vs userspace copy) |
+| Local → SSH | Async russh channel + tar over exec | **~2×** (no per-file SFTP protocol overhead) |
 
 The dominant wins are: physical-order reads (cold HDD), hard-link dedup (re-copies), and tar-batched small files (file-heavy trees).
+
+For end-to-end benchmarks specific to your workload, write a [`criterion`](https://github.com/bheisler/criterion.rs) bench under `accroitre/benches/` that materialises a representative tree and times the full pipeline.
 
 ## Architecture
 
