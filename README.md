@@ -229,6 +229,7 @@ Issues and pull requests welcome on [GitHub](https://github.com/greysquirr3l/acc
 
 ## Acknowledgements
 
+- [`fast-copy`](https://github.com/gekap/fast-copy) original inspiration for accroitre.
 - [`xxhash-rust`](https://crates.io/crates/xxhash-rust) and [`blake3`](https://crates.io/crates/blake3) for the hash functions.
 - [`russh`](https://crates.io/crates/russh) for async SSH.
 - [`indicatif`](https://crates.io/crates/indicatif) for the TUI progress display.
