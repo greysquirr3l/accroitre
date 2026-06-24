@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-24
+
+### Security
+
+- **quinn-proto** upgraded `0.11.14` → `0.11.15` to resolve [RUSTSEC-2026-0185](https://rustsec.org/advisories/RUSTSEC-2026-0185): remote memory exhaustion via unbounded out-of-order stream reassembly (CVSS 7.5 high). Transitive dependency via `reqwest → quinn → quinn-proto`.
+
 ## [0.1.0] - 2026-06-22
 
 ### Added
@@ -45,5 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MSRV: Rust 1.96.0 (edition 2024). Stable toolchain only; no nightly features.
 - License: dual MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/greysquirr3l/accroitre/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/greysquirr3l/accroitre/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/greysquirr3l/accroitre/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/greysquirr3l/accroitre/releases/tag/v0.1.0

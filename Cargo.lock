@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "accroitre"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "accroitre-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "accroitre",
  "anyhow",
