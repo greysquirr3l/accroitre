@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-25
+
+### Fixed
+
+- **Remove redundant `russh-keys` dependency** — `russh-keys` was absorbed into `russh` at 0.60; the now-redundant workspace dep has been removed from `accroitre/Cargo.toml`.
+
 ## [0.2.0] - 2026-06-25
 
 ### Added
@@ -62,7 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MSRV: Rust 1.96.0 (edition 2024). Stable toolchain only; no nightly features.
 - License: dual MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/greysquirr3l/accroitre/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/greysquirr3l/accroitre/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/greysquirr3l/accroitre/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/greysquirr3l/accroitre/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/greysquirr3l/accroitre/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/greysquirr3l/accroitre/releases/tag/v0.1.0
