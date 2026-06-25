@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-25
+
+### Added
+
+- **`--link-strategy` flag** — control how duplicate files are linked at the destination. `hardlink` (default) creates same-inode hard-links for the lowest disk use. `clone` attempts a platform-native CoW clone first (`clonefile(2)` on APFS, `FICLONE` ioctl on btrfs/XFS, `FSCTL_DUPLICATE_EXTENTS_TO_FILE` on ReFS) and falls back to hard-link when CoW is unavailable on the destination filesystem. Adds a `files_cloned` counter to `CopyResult`.
+
 ### Fixed
 
-- **Cross-device duplicate links** — hard-link failures due to EXDEV (canonical and duplicate on different mounts in the destination tree) now degrade gracefully per-link instead of silently dropping the file. Fallback chain: `fs::hard_link` → relative symlink with resolution verification (Unix only; Windows skips to copy) → full `fs::copy` as last resort. Adds `files_symlinked` and `files_fallback_copied` counters to `CopyResult`.
+- **Cross-device duplicate links** — hard-link failures due to `EXDEV` (canonical and duplicate on different mounts in the destination tree) now degrade gracefully per-link instead of silently dropping the file. Fallback chain: `fs::hard_link` → relative symlink with resolution verification (Unix only; Windows skips to copy) → full `fs::copy` as last resort. Adds `files_symlinked` and `files_fallback_copied` counters to `CopyResult`.
+- **russh 0.61 API compatibility** — SSH adapter updated to the new `russh` 0.61 interface: `AuthResult` enum replaces bare `bool` for authentication results, `PrivateKeyWithHashAlg::new(Arc::new(key), None)` replaces `Arc<PrivateKey>` in `authenticate_publickey`, and `#[async_trait]` removed from the `Handler` impl (russh 0.61 uses native `impl Future` return types in the trait definition).
 
 ## [0.1.1] - 2026-06-24
 
@@ -55,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MSRV: Rust 1.96.0 (edition 2024). Stable toolchain only; no nightly features.
 - License: dual MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/greysquirr3l/accroitre/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/greysquirr3l/accroitre/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/greysquirr3l/accroitre/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/greysquirr3l/accroitre/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/greysquirr3l/accroitre/releases/tag/v0.1.0
