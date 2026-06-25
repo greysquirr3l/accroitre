@@ -23,7 +23,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Copy files from source to destination (default when no subcommand given).
-    Copy(CopyArgs),
+    Copy(Box<CopyArgs>),
 
     /// Hash files and output JSON for remote dedup.
     Hash(HashArgs),
