@@ -8,9 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
-use russh::client::{self, Config, Handle, Msg};
-use russh::keys::key::PublicKey;
+use russh::client::{self, AuthResult, Config, Handle, Msg};
+use russh::keys::PublicKey;
 use russh::{Channel, ChannelMsg, Disconnect};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -83,7 +82,6 @@ struct ClientHandler {
     known_hosts_path: Option<PathBuf>,
 }
 
-#[async_trait]
 impl client::Handler for ClientHandler {
     type Error = russh::Error;
 
@@ -325,14 +323,14 @@ impl SshAdapter {
             };
 
             match result {
-                Ok(true) => {
+                Ok(AuthResult::Success) => {
                     info!(
                         "authenticated as {}@{} on attempt {attempt}",
                         self.config.user, self.config.host
                     );
                     return Ok(());
                 }
-                Ok(false) => {
+                Ok(AuthResult::Failure { .. }) => {
                     warn!(
                         "authentication rejected for {}@{} (attempt {attempt}/{MAX_AUTH_RETRIES})",
                         self.config.user, self.config.host
@@ -359,12 +357,13 @@ impl SshAdapter {
         handle: &mut Handle<ClientHandler>,
         key_path: &Path,
         passphrase: Option<&str>,
-    ) -> Result<bool, russh::Error> {
+    ) -> Result<AuthResult, russh::Error> {
         let key_pair =
             russh::keys::load_secret_key(key_path, passphrase).map_err(russh::Error::Keys)?;
-
+        let key_with_alg =
+            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
         handle
-            .authenticate_publickey(&self.config.user, Arc::new(key_pair))
+            .authenticate_publickey(&self.config.user, key_with_alg)
             .await
     }
 
