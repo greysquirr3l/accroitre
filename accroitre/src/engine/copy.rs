@@ -364,16 +364,15 @@ fn try_relative_symlink(canonical: &Path, dup: &Path) -> bool {
 ///
 /// Windows symlinks require elevation or Developer Mode, so we skip straight
 /// to the full-copy last resort there.
+#[cfg(unix)]
 fn attempt_symlink_fallback(canonical: &Path, dup: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        try_relative_symlink(canonical, dup)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (canonical, dup);
-        false
-    }
+    try_relative_symlink(canonical, dup)
+}
+
+/// Cross-device dedup fallback: no-op on non-Unix targets.
+#[cfg(not(unix))]
+const fn attempt_symlink_fallback(_canonical: &Path, _dup: &Path) -> bool {
+    false
 }
 
 /// Persist a link event to the manifest.

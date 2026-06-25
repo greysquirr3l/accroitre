@@ -373,11 +373,15 @@ pub fn io_uring_supported() -> bool {
 /// Attempt a copy-on-write clone using the `FICLONE` ioctl (btrfs / XFS / OCFS2).
 ///
 /// Returns `Ok(true)` on success, `Ok(false)` when the filesystem or kernel does
-/// not support CoW (caller should fall through to the next tier), or `Err` for
+/// not support `CoW` (caller should fall through to the next tier), or `Err` for
 /// unexpected I/O failures.
 ///
 /// `FICLONE = _IOW(0x94, 9, int)` — clones the entire source fd into the
 /// destination fd. Requires Linux 4.5+.
+// FICLONE = _IOW(0x94, 9, int): hoisted before any statements to satisfy
+// clippy::items_after_statements.
+const FICLONE: libc::c_ulong = 0x4004_9409;
+
 pub fn try_reflink(src: &Path, dst: &Path) -> Result<bool, CopyError> {
     let src_file = fs::File::open(src).map_err(|e| CopyError::FileCopy {
         src: src.to_path_buf(),
@@ -389,9 +393,6 @@ pub fn try_reflink(src: &Path, dst: &Path) -> Result<bool, CopyError> {
         dst: dst.to_path_buf(),
         source: e,
     })?;
-
-    // FICLONE = _IOW(0x94, 9, int): clones entire src fd into an open dst fd.
-    const FICLONE: libc::c_ulong = 0x4004_9409;
 
     // SAFETY: FICLONE ioctl takes a single src fd (i32) as its only argument.
     // Both fds refer to valid, open regular files.
