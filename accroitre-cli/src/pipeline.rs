@@ -293,6 +293,8 @@ fn dry_run_result(plan: &accroitre::domain::CopyPlan, dedup_stats: DedupStats) -
         copy_result: CopyResult {
             files_copied: 0,
             files_linked: 0,
+            files_symlinked: 0,
+            files_fallback_copied: 0,
             bytes_copied: 0,
             errors: Vec::new(),
         },
@@ -385,6 +387,8 @@ const fn cancelled_result() -> PipelineResult {
         copy_result: CopyResult {
             files_copied: 0,
             files_linked: 0,
+            files_symlinked: 0,
+            files_fallback_copied: 0,
             bytes_copied: 0,
             errors: Vec::new(),
         },
@@ -516,6 +520,8 @@ mod tests {
             copy_result: CopyResult {
                 files_copied: 10,
                 files_linked: 0,
+                files_symlinked: 0,
+                files_fallback_copied: 0,
                 bytes_copied: 1000,
                 errors: Vec::new(),
             },
