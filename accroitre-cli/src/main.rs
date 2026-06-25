@@ -37,6 +37,9 @@ enum Commands {
 
 /// Arguments for the copy (and default) operation.
 #[derive(Parser, Debug)]
+// CLI arg structs legitimately collect many boolean flags; refactoring to a
+// separate flags struct would hurt clap's derive ergonomics without benefit.
+#[allow(clippy::struct_excessive_bools)]
 pub struct CopyArgs {
     /// Source path.  Use `user@host:/path` for remote SSH sources.
     #[arg(value_name = "SOURCE")]
@@ -67,6 +70,14 @@ pub struct CopyArgs {
     /// Disable content deduplication (hard-linking).
     #[arg(long)]
     pub no_dedup: bool,
+
+    /// Strategy for resolving duplicate files during the dedup phase.
+    ///
+    /// `hardlink` (default): share an inode — zero extra space, divergence impossible.
+    /// `clone`: copy-on-write where the filesystem supports it (`APFS`, `btrfs`, `XFS`, `ReFS`);
+    /// duplicates start identical but can diverge independently.
+    #[arg(long, default_value = "hardlink", value_parser = ["hardlink", "clone"], value_name = "STRATEGY")]
+    pub link_strategy: String,
 
     /// Disable the on-disk hash cache.
     #[arg(long)]

@@ -153,8 +153,14 @@ pub fn try_macos_optimal_copy(src: &Path, dest: &Path, try_clone: bool) -> Resul
     try_fcopyfile(src, dest)
 }
 
-/// Attempt macOS APFS `clonefile(2)`.
-fn try_clonefile(src: &Path, dest: &Path) -> Result<(), CopyError> {
+/// Attempt macOS `APFS` `clonefile(2)`.
+///
+/// # Errors
+///
+/// Returns `CopyError::FileCopy` if the path cannot be converted to a C string,
+/// if `clonefile(2)` returns a non-`ENOTSUP`/`EXDEV` error, or if the fallback
+/// `fcopyfile(3)` fails.
+pub fn try_clonefile(src: &Path, dest: &Path) -> Result<(), CopyError> {
     let c_src =
         CString::new(src.to_string_lossy().as_bytes()).map_err(|_| CopyError::FileCopy {
             src: src.to_path_buf(),

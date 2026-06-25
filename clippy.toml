@@ -1,1 +1,5 @@
 msrv = "1.96.0"
+# Pipeline orchestrator functions legitimately exceed 100 lines;
+# allow up to 120 before flagging.
+too-many-lines-threshold = 120
+

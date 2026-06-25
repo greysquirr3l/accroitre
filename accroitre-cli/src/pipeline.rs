@@ -9,7 +9,7 @@ use accroitre::adapters::log::JsonLog;
 use accroitre::adapters::manifest::CopyManifest;
 use accroitre::domain::HashAlgorithm;
 use accroitre::engine::copy::{
-    CopyConfig, CopyResult, execute_copy_plan, execute_copy_plan_resumable,
+    CopyConfig, CopyResult, LinkStrategy, execute_copy_plan, execute_copy_plan_resumable,
 };
 use accroitre::engine::dedup::{DedupStats, build_dedup_plan};
 use accroitre::engine::delta;
@@ -169,7 +169,13 @@ pub async fn run_local_pipeline(
     }
 
     // 5. Copy
-    let copy_result = run_copy(&plan, buffer_size, tui, Some(&mut manifest))?;
+    let copy_result = run_copy(
+        &plan,
+        buffer_size,
+        link_strategy_for_arg(&args.link_strategy),
+        tui,
+        Some(&mut manifest),
+    )?;
     if let Some(ref log) = json_log {
         log_copy_results(log, &copy_result, &plan);
     }
@@ -293,6 +299,7 @@ fn dry_run_result(plan: &accroitre::domain::CopyPlan, dedup_stats: DedupStats) -
         copy_result: CopyResult {
             files_copied: 0,
             files_linked: 0,
+            files_cloned: 0,
             files_symlinked: 0,
             files_fallback_copied: 0,
             bytes_copied: 0,
@@ -304,16 +311,26 @@ fn dry_run_result(plan: &accroitre::domain::CopyPlan, dedup_stats: DedupStats) -
     }
 }
 
+fn link_strategy_for_arg(s: &str) -> LinkStrategy {
+    if s == "clone" {
+        LinkStrategy::Clone
+    } else {
+        LinkStrategy::HardLink
+    }
+}
+
 fn run_copy(
     plan: &accroitre::domain::CopyPlan,
     buffer_size: usize,
+    link_strategy: LinkStrategy,
     tui: &TuiProgress,
     manifest: Option<&mut CopyManifest>,
 ) -> Result<CopyResult> {
     let copy_config = CopyConfig {
         buffer_size,
         small_file_threshold: 32 * 1024,
-        try_clonefile: true,
+        try_clonefile: cfg!(target_os = "macos"),
+        link_strategy,
     };
     let result = if let Some(m) = manifest {
         execute_copy_plan_resumable(plan, &copy_config, tui, Some(m)).context("copy failed")?
@@ -387,6 +404,7 @@ const fn cancelled_result() -> PipelineResult {
         copy_result: CopyResult {
             files_copied: 0,
             files_linked: 0,
+            files_cloned: 0,
             files_symlinked: 0,
             files_fallback_copied: 0,
             bytes_copied: 0,
@@ -451,6 +469,7 @@ mod tests {
             ssh_dst_key: None,
             ssh_dst_password: None,
             compress: false,
+            link_strategy: "hardlink".to_owned(),
         }
     }
 
@@ -520,6 +539,7 @@ mod tests {
             copy_result: CopyResult {
                 files_copied: 10,
                 files_linked: 0,
+                files_cloned: 0,
                 files_symlinked: 0,
                 files_fallback_copied: 0,
                 bytes_copied: 1000,

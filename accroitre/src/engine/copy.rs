@@ -25,6 +25,25 @@ const DEFAULT_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 /// Threshold below which files are considered "small" and batched into tar (1 MiB).
 const SMALL_FILE_THRESHOLD: u64 = 1024 * 1024;
 
+/// Strategy for resolving duplicate files during the dedup phase.
+///
+/// Both strategies produce zero extra disk space on creation; they differ in
+/// inode semantics and what happens when one of the files is later written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LinkStrategy {
+    /// Hard-link duplicates to the canonical file (default).
+    ///
+    /// Files share a single inode — writes to one are visible on all.
+    /// Best for backups where divergence is never expected.
+    #[default]
+    HardLink,
+    /// Copy-on-write clone where the filesystem supports it (`APFS`, `btrfs`, `XFS`, `ReFS`).
+    ///
+    /// Separate inodes that start identical; each can diverge independently.
+    /// Falls back to hard-link when `CoW` is unavailable on the destination filesystem.
+    Clone,
+}
+
 /// Configuration for the copy engine.
 #[derive(Debug, Clone)]
 pub struct CopyConfig {
@@ -32,8 +51,10 @@ pub struct CopyConfig {
     pub buffer_size: usize,
     /// Threshold below which files are tar-batched (default: 1 MiB).
     pub small_file_threshold: u64,
-    /// Whether to attempt macOS APFS clonefile.
+    /// Whether to attempt macOS `APFS` clonefile for canonical copies.
     pub try_clonefile: bool,
+    /// Strategy for resolving duplicate files in the dedup phase.
+    pub link_strategy: LinkStrategy,
 }
 
 impl Default for CopyConfig {
@@ -42,6 +63,7 @@ impl Default for CopyConfig {
             buffer_size: DEFAULT_BUFFER_SIZE,
             small_file_threshold: SMALL_FILE_THRESHOLD,
             try_clonefile: cfg!(target_os = "macos"),
+            link_strategy: LinkStrategy::HardLink,
         }
     }
 }
@@ -53,6 +75,8 @@ pub struct CopyResult {
     pub files_copied: u64,
     /// Number of files hard-linked.
     pub files_linked: u64,
+    /// Number of duplicate files resolved via `CoW` clone (`--link-strategy clone`).
+    pub files_cloned: u64,
     /// Number of duplicate files resolved via relative symlink (cross-device fallback).
     pub files_symlinked: u64,
     /// Number of duplicate files that required a full independent copy (last-resort fallback).
@@ -99,6 +123,7 @@ pub fn execute_copy_plan_resumable(
     let mut result = CopyResult {
         files_copied: 0,
         files_linked: 0,
+        files_cloned: 0,
         files_symlinked: 0,
         files_fallback_copied: 0,
         bytes_copied: 0,
@@ -175,6 +200,7 @@ pub fn execute_copy_plan_resumable(
         bytes_total,
         files_skipped,
         manifest,
+        config.link_strategy,
     );
 
     progress.update(&ProgressUpdate::PhaseComplete { phase: "copy" });
@@ -380,19 +406,60 @@ fn update_manifest_copied(
     }
 }
 
-/// Outcome of a single dedup-link attempt (hard link → symlink → full copy).
+/// Outcome of a single dedup-link attempt (`CoW` clone → hard link → symlink → full copy).
 enum DupLinkOutcome {
+    Cloned,
     Linked,
     Symlinked,
     FallbackCopied,
     Error(CopyError),
 }
 
-/// Try to resolve one duplicate via the three-tier chain.
+/// Attempt a platform-native copy-on-write clone.
 ///
-/// Ownership of `dup_dest` stays with the caller; this function only needs
-/// shared references.
-fn apply_dedup_link(canonical_dest: &Path, dup_dest: &Path) -> DupLinkOutcome {
+/// Returns `Ok(true)` on success, `Ok(false)` when `CoW` is unavailable on the
+/// destination filesystem (caller should fall through), or `Err` on unexpected
+/// failures.
+#[cfg(target_os = "macos")]
+fn try_platform_clone(src: &Path, dst: &Path) -> Result<bool, CopyError> {
+    super::macos_io::try_clonefile(src, dst).map(|()| true)
+}
+
+#[cfg(target_os = "linux")]
+fn try_platform_clone(src: &Path, dst: &Path) -> Result<bool, CopyError> {
+    super::linux_io::try_reflink(src, dst)
+}
+
+#[cfg(target_os = "windows")]
+fn try_platform_clone(src: &Path, dst: &Path) -> Result<bool, CopyError> {
+    super::windows_io::try_refs_block_clone(src, dst).map_err(|e| CopyError::FileCopy {
+        src: src.to_path_buf(),
+        dst: dst.to_path_buf(),
+        source: e,
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn try_platform_clone(_src: &Path, _dst: &Path) -> Result<bool, CopyError> {
+    Ok(false)
+}
+
+/// Try to resolve one duplicate via the tiered chain.
+///
+/// For `LinkStrategy::Clone`, `CoW` is attempted first; both strategies share
+/// the EXDEV fallback path (symlink → full copy).
+fn apply_dedup_link(
+    canonical_dest: &Path,
+    dup_dest: &Path,
+    link_strategy: LinkStrategy,
+) -> DupLinkOutcome {
+    // CoW clone tier — only when explicitly requested.
+    if link_strategy == LinkStrategy::Clone
+        && matches!(try_platform_clone(canonical_dest, dup_dest), Ok(true))
+    {
+        return DupLinkOutcome::Cloned;
+    }
+
     match fs::hard_link(canonical_dest, dup_dest) {
         Ok(()) => DupLinkOutcome::Linked,
         Err(e) if is_cross_device(&e) => {
@@ -424,10 +491,15 @@ fn apply_dedup_link(canonical_dest: &Path, dup_dest: &Path) -> DupLinkOutcome {
 
 /// Create hard links for all duplicate files, degrading gracefully on EXDEV:
 ///
-/// 1. `fs::hard_link` — same-device fast path.
-/// 2. Relative symlink (Unix only) — crosses mount boundaries; verified to
+/// 1. `CoW` clone (`LinkStrategy::Clone` only) — same-device, metadata-only.
+/// 2. `fs::hard_link` — same-device fast path.
+/// 3. Relative symlink (Unix only) — crosses mount boundaries; verified to
 ///    resolve before being committed.
-/// 3. Full copy — last resort; bytes counted in `result.bytes_copied`.
+/// 4. Full copy — last resort; bytes counted in `result.bytes_copied`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Phase-2 link helper carries its full call-site context; further bundling hides state coupling."
+)]
 fn create_hard_links_resumable(
     plan: &CopyPlan,
     result: &mut CopyResult,
@@ -436,6 +508,7 @@ fn create_hard_links_resumable(
     bytes_total: u64,
     files_skipped: u64,
     mut manifest: Option<&mut CopyManifest>,
+    link_strategy: LinkStrategy,
 ) {
     for group in &plan.dedup_groups {
         let Some(canonical) = plan.entries.get(group.canonical) else {
@@ -468,7 +541,17 @@ fn create_hard_links_resumable(
                 continue;
             }
 
-            match apply_dedup_link(&canonical_dest, &dup_dest) {
+            match apply_dedup_link(&canonical_dest, &dup_dest, link_strategy) {
+                DupLinkOutcome::Cloned => {
+                    result.files_cloned += 1;
+                    update_manifest_linked(
+                        manifest.as_deref_mut(),
+                        plan,
+                        &relative,
+                        dup_entry.size,
+                        hash_str.as_deref(),
+                    );
+                }
                 DupLinkOutcome::Linked => {
                     result.files_linked += 1;
                     update_manifest_linked(
@@ -509,6 +592,7 @@ fn create_hard_links_resumable(
 
             let files_done = result.files_copied
                 + result.files_linked
+                + result.files_cloned
                 + result.files_symlinked
                 + result.files_fallback_copied
                 + files_skipped;

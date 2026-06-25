@@ -45,7 +45,9 @@ pub use domain::{
 };
 
 // Engine entry points
-pub use engine::copy::{CopyConfig, CopyResult, execute_copy_plan, execute_copy_plan_resumable};
+pub use engine::copy::{
+    CopyConfig, CopyResult, LinkStrategy, execute_copy_plan, execute_copy_plan_resumable,
+};
 pub use engine::dedup::{DedupStats, build_dedup_plan, dedup_with_hashing};
 pub use engine::delta::{DeltaResult, compute_delta, delete_orphans, find_orphans};
 pub use engine::hash::{HashConfig, HashResult, hash_bytes, hash_entries, hash_file};

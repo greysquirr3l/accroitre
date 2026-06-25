@@ -370,6 +370,64 @@ pub fn io_uring_supported() -> bool {
     kernel_version().is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 1))
 }
 
+/// Attempt a copy-on-write clone using the `FICLONE` ioctl (btrfs / XFS / OCFS2).
+///
+/// Returns `Ok(true)` on success, `Ok(false)` when the filesystem or kernel does
+/// not support CoW (caller should fall through to the next tier), or `Err` for
+/// unexpected I/O failures.
+///
+/// `FICLONE = _IOW(0x94, 9, int)` — clones the entire source fd into the
+/// destination fd. Requires Linux 4.5+.
+pub fn try_reflink(src: &Path, dst: &Path) -> Result<bool, CopyError> {
+    let src_file = fs::File::open(src).map_err(|e| CopyError::FileCopy {
+        src: src.to_path_buf(),
+        dst: dst.to_path_buf(),
+        source: e,
+    })?;
+    let dst_file = fs::File::create(dst).map_err(|e| CopyError::FileCopy {
+        src: src.to_path_buf(),
+        dst: dst.to_path_buf(),
+        source: e,
+    })?;
+
+    // FICLONE = _IOW(0x94, 9, int): clones entire src fd into an open dst fd.
+    const FICLONE: libc::c_ulong = 0x4004_9409;
+
+    // SAFETY: FICLONE ioctl takes a single src fd (i32) as its only argument.
+    // Both fds refer to valid, open regular files.
+    let ret = unsafe { libc::ioctl(dst_file.as_raw_fd(), FICLONE, src_file.as_raw_fd()) };
+
+    if ret == 0 {
+        return Ok(true);
+    }
+
+    let err = io::Error::last_os_error();
+    drop(dst_file);
+    let _ = fs::remove_file(dst);
+
+    // EOPNOTSUPP: filesystem doesn't support CoW.
+    // ENOSYS: kernel predates FICLONE (< 4.5).
+    // EXDEV: src and dst are on different devices.
+    // EINVAL: misaligned or otherwise invalid operands.
+    // ENOTTY: ioctl unrecognised on this fd type.
+    // All of these are non-fatal — caller falls through to next dedup tier.
+    let raw = err.raw_os_error().unwrap_or(0);
+    if raw == libc::EOPNOTSUPP
+        || raw == libc::ENOSYS
+        || raw == libc::EXDEV
+        || raw == libc::EINVAL
+        || raw == libc::ENOTTY
+    {
+        Ok(false)
+    } else {
+        Err(CopyError::FileCopy {
+            src: src.to_path_buf(),
+            dst: dst.to_path_buf(),
+            source: err,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
