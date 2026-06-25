@@ -4,12 +4,15 @@
 
 Accroître reads files in physical disk order to eliminate random seeks on spinning disks, deduplicates content via xxHash-128 or BLAKE3 (copy once, hard-link the rest), batches small files through tar pipes to amortise syscall overhead, and transfers over SSH without SFTP. Designed to be the obvious choice for local copies, USB/NAS backups, and remote SSH transfers — hands-down faster than `rsync`, `scp`, and `cp` on real-world workloads.
 
+> **Standing on the shoulders of giants.** Accroître was directly inspired by the Python [`fast-copy`](https://github.com/gekap/fast-copy) library created by [@gekap](https://github.com/gekap). `fast-copy` was the first project to show that physical-order reads, CoW-aware deduplication, and batched small-file transfers could dramatically outpace generic copy utilities. Accroître takes those ideas and rebuilds them in Rust — async I/O, content hashing, SSH streaming, and a full cross-platform story included.
+
 - **Physical-order reads** — files are sorted by their on-disk block offset, so HDDs see one continuous sweep instead of thrashing across cylinders.
 - **Content-aware dedup** — files with matching size and hash become hard-links. A 1 TiB copy of a 2 TiB dataset with 50 % duplicates writes 1 TiB and zero additional inodes for the shared half.
 - **Tar-batched small files** — sub-`small_file_threshold` files are packed into a single tar archive in memory and unpacked at the destination, dropping per-file `open`/`write`/`close` overhead by 1–2 orders of magnitude on file-heavy trees.
 - **SSH without SFTP** — uses `russh` for async, multiplexed channels and pipes tar archives directly over the SSH exec channel. No `sftp-server` requirement on the remote.
 - **Resumable copies** — a `.accroitre-manifest.json` at the destination records per-file completion; an interrupted run picks up where it left off.
 - **Delta sync** — only files whose size or mtime changed since the last run are copied.
+- **Link strategy** — `--link-strategy hardlink` (default) creates same-inode hard-links for the lowest possible disk use. `--link-strategy clone` uses platform-native CoW clones (`clonefile` on APFS, `FICLONE` reflink on btrfs/XFS, ReFS block-clone on Windows) to produce separate inodes that can diverge after the copy; falls back to hard-link when CoW is unavailable.
 - **Cross-process safety** — a destination-root exclusive lock prevents two `accro` runs from corrupting each other's manifest or SQLite cache.
 - **Self-update** — `accro update` pulls a signed release from GitHub and atomically swaps the binary in place.
 
@@ -79,6 +82,13 @@ accro copy --delete /mnt/source /mnt/backup
 # Show what would be copied without writing
 accro copy --dry-run /mnt/source /mnt/backup
 
+# Hard-link dedup (default) — lowest disk use, shared inodes
+accro copy --link-strategy hardlink /mnt/source /mnt/backup
+
+# CoW clone dedup — separate inodes that can diverge post-copy
+# (uses clonefile/FICLONE/ReFS; falls back to hard-link if unsupported)
+accro copy --link-strategy clone /mnt/source /mnt/backup
+
 # Pipe-friendly JSON log for orchestration
 accro copy --log-file run.jsonl /mnt/source /mnt/backup
 
@@ -121,7 +131,7 @@ Two-phase execution:
   - **Linux**: `copy_file_range(2)` → `splice(2)` → buffered fallback (in priority order).
   - **Windows**: `FSCTL_DUPLICATE_EXTENTS_TO_FILE` for ReFS block cloning; `CopyFileExW` with callbacks elsewhere.
   - Small files are batched into a tar archive in memory and unpacked at the destination.
-- **Phase 2** hard-links duplicates.
+- **Phase 2** links duplicates. `--link-strategy hardlink` (default) creates same-inode hard-links — lowest disk use. `--link-strategy clone` attempts a platform-native CoW clone first (`clonefile` on APFS, `FICLONE` ioctl on btrfs/XFS, `FSCTL_DUPLICATE_EXTENTS_TO_FILE` on ReFS) and falls back to hard-link when CoW is unavailable on the destination filesystem. The `files_cloned` counter in the summary reflects CoW-resolved duplicates.
 
 A pre-flight `statvfs`/`GetDiskFreeSpaceExW` check guards against running out of disk mid-copy.
 
@@ -229,7 +239,7 @@ Issues and pull requests welcome on [GitHub](https://github.com/greysquirr3l/acc
 
 ## Acknowledgements
 
-- [`fast-copy`](https://github.com/gekap/fast-copy) original inspiration for accroitre.
+- [`fast-copy`](https://github.com/gekap/fast-copy) by [@gekap](https://github.com/gekap) — the Python library that first proved physical-order reads and CoW-aware deduplication leave generic copy tools behind. Accroître was built to carry those ideas further in Rust.
 - [`xxhash-rust`](https://crates.io/crates/xxhash-rust) and [`blake3`](https://crates.io/crates/blake3) for the hash functions.
 - [`russh`](https://crates.io/crates/russh) for async SSH.
 - [`indicatif`](https://crates.io/crates/indicatif) for the TUI progress display.
