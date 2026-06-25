@@ -360,8 +360,7 @@ impl SshAdapter {
     ) -> Result<AuthResult, russh::Error> {
         let key_pair =
             russh::keys::load_secret_key(key_path, passphrase).map_err(russh::Error::Keys)?;
-        let key_with_alg =
-            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
+        let key_with_alg = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
         handle
             .authenticate_publickey(&self.config.user, key_with_alg)
             .await
