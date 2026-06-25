@@ -53,7 +53,11 @@ pub struct CopyResult {
     pub files_copied: u64,
     /// Number of files hard-linked.
     pub files_linked: u64,
-    /// Total bytes copied.
+    /// Number of duplicate files resolved via relative symlink (cross-device fallback).
+    pub files_symlinked: u64,
+    /// Number of duplicate files that required a full independent copy (last-resort fallback).
+    pub files_fallback_copied: u64,
+    /// Total bytes physically written (includes fallback copies of dedup'd files).
     pub bytes_copied: u64,
     /// Non-fatal errors encountered.
     pub errors: Vec<CopyError>,
@@ -95,6 +99,8 @@ pub fn execute_copy_plan_resumable(
     let mut result = CopyResult {
         files_copied: 0,
         files_linked: 0,
+        files_symlinked: 0,
+        files_fallback_copied: 0,
         bytes_copied: 0,
         errors: Vec::new(),
     };
@@ -270,7 +276,158 @@ fn mark_small_files_in_manifest(
     }
 }
 
-/// Create hard links for all duplicate files, with optional manifest tracking.
+/// Returns `true` if `e` indicates a cross-device operation (EXDEV / `ERROR_NOT_SAME_DEVICE`).
+///
+/// [`io::ErrorKind::CrossesDevices`] maps to both error codes on all supported platforms
+/// and was stabilised in Rust 1.75.
+fn is_cross_device(e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::CrossesDevices
+}
+
+/// Compute a relative path from `from_dir` to `target`.
+///
+/// Both paths are expected to be absolute. Works by finding the longest common
+/// prefix, then prepending `..` components to climb out of `from_dir`.
+#[cfg(unix)]
+fn make_relative_path(target: &Path, from_dir: &Path) -> PathBuf {
+    let target_comps: Vec<_> = target.components().collect();
+    let from_comps: Vec<_> = from_dir.components().collect();
+
+    let common = target_comps
+        .iter()
+        .zip(from_comps.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut rel = PathBuf::new();
+    for _ in 0..(from_comps.len() - common) {
+        rel.push("..");
+    }
+    for comp in target_comps.iter().skip(common) {
+        rel.push(comp);
+    }
+    rel
+}
+
+/// Attempt to create a relative symlink at `dup` pointing at `canonical`.
+///
+/// Returns `true` only if the symlink was created *and* resolves to an
+/// accessible file. Cleans up a dangling symlink before returning `false`.
+#[cfg(unix)]
+fn try_relative_symlink(canonical: &Path, dup: &Path) -> bool {
+    use std::os::unix::fs as unix_fs;
+
+    let Some(dup_parent) = dup.parent() else {
+        return false;
+    };
+    let rel = make_relative_path(canonical, dup_parent);
+    if unix_fs::symlink(&rel, dup).is_err() {
+        return false;
+    }
+    // Follow the symlink and confirm it resolves to a real file.
+    if dup.is_file() {
+        return true;
+    }
+    // Dangling — remove and signal failure so the caller falls through to a
+    // full copy.
+    let _ = fs::remove_file(dup);
+    false
+}
+
+/// Cross-device dedup fallback: relative symlink on Unix, skipped on Windows.
+///
+/// Windows symlinks require elevation or Developer Mode, so we skip straight
+/// to the full-copy last resort there.
+fn attempt_symlink_fallback(canonical: &Path, dup: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        try_relative_symlink(canonical, dup)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (canonical, dup);
+        false
+    }
+}
+
+/// Persist a link event to the manifest.
+fn update_manifest_linked(
+    manifest: Option<&mut CopyManifest>,
+    plan: &CopyPlan,
+    relative: &str,
+    size: u64,
+    hash: Option<&str>,
+) {
+    let Some(m) = manifest else { return };
+    m.mark_linked(relative, size, hash);
+    if let Err(e) = m.save(&plan.dest_root) {
+        warn!("failed to update manifest: {e}");
+    }
+}
+
+/// Persist a copy event to the manifest.
+fn update_manifest_copied(
+    manifest: Option<&mut CopyManifest>,
+    plan: &CopyPlan,
+    relative: &str,
+    size: u64,
+    hash: Option<&str>,
+) {
+    let Some(m) = manifest else { return };
+    m.mark_copied(relative, size, hash);
+    if let Err(e) = m.save(&plan.dest_root) {
+        warn!("failed to update manifest: {e}");
+    }
+}
+
+/// Outcome of a single dedup-link attempt (hard link → symlink → full copy).
+enum DupLinkOutcome {
+    Linked,
+    Symlinked,
+    FallbackCopied,
+    Error(CopyError),
+}
+
+/// Try to resolve one duplicate via the three-tier chain.
+///
+/// Ownership of `dup_dest` stays with the caller; this function only needs
+/// shared references.
+fn apply_dedup_link(canonical_dest: &Path, dup_dest: &Path) -> DupLinkOutcome {
+    match fs::hard_link(canonical_dest, dup_dest) {
+        Ok(()) => DupLinkOutcome::Linked,
+        Err(e) if is_cross_device(&e) => {
+            warn!(
+                "hard link crossed mount boundary ({} \u{2192} {}); trying fallback",
+                canonical_dest.display(),
+                dup_dest.display()
+            );
+            if attempt_symlink_fallback(canonical_dest, dup_dest) {
+                DupLinkOutcome::Symlinked
+            } else {
+                match fs::copy(canonical_dest, dup_dest) {
+                    Ok(_) => DupLinkOutcome::FallbackCopied,
+                    Err(copy_err) => DupLinkOutcome::Error(CopyError::FileCopy {
+                        src: canonical_dest.to_path_buf(),
+                        dst: dup_dest.to_path_buf(),
+                        source: copy_err,
+                    }),
+                }
+            }
+        }
+        Err(e) => DupLinkOutcome::Error(CopyError::HardLink {
+            src: canonical_dest.to_path_buf(),
+            dst: dup_dest.to_path_buf(),
+            source: e,
+        }),
+    }
+}
+
+/// Create hard links for all duplicate files, degrading gracefully on EXDEV:
+///
+/// 1. `fs::hard_link` — same-device fast path.
+/// 2. Relative symlink (Unix only) — crosses mount boundaries; verified to
+///    resolve before being committed.
+/// 3. Full copy — last resort; bytes counted in `result.bytes_copied`.
 fn create_hard_links_resumable(
     plan: &CopyPlan,
     result: &mut CopyResult,
@@ -292,12 +449,12 @@ fn create_hard_links_resumable(
                 continue;
             };
 
-            // Check manifest for already-completed links.
             let relative = relative_path_str(&dup_entry.path, &plan.source_root);
             let hash_str = dup_entry
                 .hash
                 .as_ref()
                 .map(std::string::ToString::to_string);
+
             if let Some(ref manifest) = manifest
                 && manifest.is_completed(&relative, dup_entry.size, hash_str.as_deref())
             {
@@ -305,49 +462,63 @@ fn create_hard_links_resumable(
                 continue;
             }
 
-            let dup_dest = map_source_to_dest(&dup_entry.path, &plan.source_root, &plan.dest_root);
+            let dup_dest =
+                map_source_to_dest(&dup_entry.path, &plan.source_root, &plan.dest_root);
 
-            // Ensure parent directory exists.
-            if let Some(parent) = dup_dest.parent()
-                && let Err(e) = fs::create_dir_all(parent)
-            {
-                let err = CopyError::CreateDir {
-                    path: parent.to_path_buf(),
-                    source: e,
-                };
-                warn!("{err}");
-                result.errors.push(err);
+            if !ensure_parent_dir(&dup_dest, &mut result.errors) {
                 continue;
             }
 
-            match fs::hard_link(&canonical_dest, &dup_dest) {
-                Ok(()) => {
+            match apply_dedup_link(&canonical_dest, &dup_dest) {
+                DupLinkOutcome::Linked => {
                     result.files_linked += 1;
-
-                    if let Some(ref mut m) = manifest {
-                        m.mark_linked(&relative, dup_entry.size, hash_str.as_deref());
-                        if let Err(e) = m.save(&plan.dest_root) {
-                            warn!("failed to update manifest: {e}");
-                        }
-                    }
-
-                    progress.update(&ProgressUpdate::CopyProgress {
-                        files_copied: result.files_copied + result.files_linked + files_skipped,
-                        files_total,
-                        bytes_copied: result.bytes_copied,
-                        bytes_total,
-                    });
+                    update_manifest_linked(
+                        manifest.as_deref_mut(),
+                        plan,
+                        &relative,
+                        dup_entry.size,
+                        hash_str.as_deref(),
+                    );
                 }
-                Err(e) => {
-                    let err = CopyError::HardLink {
-                        src: canonical_dest.clone(),
-                        dst: dup_dest,
-                        source: e,
-                    };
+                DupLinkOutcome::Symlinked => {
+                    result.files_symlinked += 1;
+                    update_manifest_linked(
+                        manifest.as_deref_mut(),
+                        plan,
+                        &relative,
+                        dup_entry.size,
+                        hash_str.as_deref(),
+                    );
+                }
+                DupLinkOutcome::FallbackCopied => {
+                    result.files_fallback_copied += 1;
+                    result.bytes_copied += dup_entry.size;
+                    update_manifest_copied(
+                        manifest.as_deref_mut(),
+                        plan,
+                        &relative,
+                        dup_entry.size,
+                        hash_str.as_deref(),
+                    );
+                }
+                DupLinkOutcome::Error(err) => {
                     warn!("{err}");
                     result.errors.push(err);
+                    continue;
                 }
             }
+
+            let files_done = result.files_copied
+                + result.files_linked
+                + result.files_symlinked
+                + result.files_fallback_copied
+                + files_skipped;
+            progress.update(&ProgressUpdate::CopyProgress {
+                files_copied: files_done,
+                files_total,
+                bytes_copied: result.bytes_copied,
+                bytes_total,
+            });
         }
     }
 }
@@ -801,6 +972,77 @@ mod tests {
         assert_eq!(result.files_copied, 0);
         assert_eq!(result.files_linked, 0);
         assert_eq!(result.bytes_copied, 0);
+        Ok(())
+    }
+
+    // --- make_relative_path + symlink fallback ---
+
+    #[cfg(unix)]
+    #[test]
+    fn make_relative_path_same_parent() {
+        let target = Path::new("/a/b/canonical.txt");
+        let from_dir = Path::new("/a/b");
+        assert_eq!(
+            make_relative_path(target, from_dir),
+            PathBuf::from("canonical.txt")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn make_relative_path_sibling_dir() {
+        let target = Path::new("/a/b/canonical.txt");
+        let from_dir = Path::new("/a/c");
+        assert_eq!(
+            make_relative_path(target, from_dir),
+            PathBuf::from("../b/canonical.txt")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn make_relative_path_deeper_nesting() {
+        let target = Path::new("/data/store/file.dat");
+        let from_dir = Path::new("/data/mnt/sub/dir");
+        assert_eq!(
+            make_relative_path(target, from_dir),
+            PathBuf::from("../../../store/file.dat")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attempt_symlink_fallback_creates_resolving_link() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let canonical = dir.path().join("canonical.txt");
+        let dup_dir = dir.path().join("sub");
+        let dup = dup_dir.join("dup.txt");
+
+        fs::write(&canonical, "content")?;
+        fs::create_dir_all(&dup_dir)?;
+
+        assert!(attempt_symlink_fallback(&canonical, &dup));
+        assert!(dup.is_file(), "symlink should resolve to a file");
+        assert_eq!(fs::read_to_string(&dup)?, "content");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attempt_symlink_fallback_cleans_up_dangling_link() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new()?;
+        // canonical does not exist — symlink will be dangling.
+        let canonical = dir.path().join("ghost.txt");
+        let dup = dir.path().join("dup.txt");
+
+        let result = attempt_symlink_fallback(&canonical, &dup);
+
+        assert!(!result, "should return false for a dangling symlink");
+        assert!(
+            !dup.exists(),
+            "dangling symlink should have been cleaned up"
+        );
         Ok(())
     }
 }
