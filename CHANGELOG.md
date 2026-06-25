@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-25
+
+### Fixed
+
+- **CI: resolve cross-platform clippy errors** — three Windows/Linux clippy violations introduced with the 0.2.x feature work:
+  - `linux_io`: added backticks around `CoW` in doc comment (`doc_markdown`).
+  - `linux_io`: hoisted `FICLONE` constant before statements (`items_after_statements`).
+  - `copy`: split `attempt_symlink_fallback` into two `#[cfg]`-gated functions; the non-Unix variant is now `const fn`, satisfying `missing_const_for_fn` on Windows.
+  - `main`: boxed `Commands::Copy(Box<CopyArgs>)` to satisfy `large_enum_variant` on Windows where `CopyArgs` is wider due to `PathBuf` encoding.
+
 ## [0.2.1] - 2026-06-25
 
 ### Fixed
@@ -68,7 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MSRV: Rust 1.96.0 (edition 2024). Stable toolchain only; no nightly features.
 - License: dual MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/greysquirr3l/accroitre/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/greysquirr3l/accroitre/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/greysquirr3l/accroitre/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/greysquirr3l/accroitre/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/greysquirr3l/accroitre/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/greysquirr3l/accroitre/compare/v0.1.0...v0.1.1
