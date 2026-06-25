@@ -462,8 +462,7 @@ fn create_hard_links_resumable(
                 continue;
             }
 
-            let dup_dest =
-                map_source_to_dest(&dup_entry.path, &plan.source_root, &plan.dest_root);
+            let dup_dest = map_source_to_dest(&dup_entry.path, &plan.source_root, &plan.dest_root);
 
             if !ensure_parent_dir(&dup_dest, &mut result.errors) {
                 continue;

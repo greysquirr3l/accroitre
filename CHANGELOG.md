@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cross-device duplicate links** — hard-link failures due to EXDEV (canonical and duplicate on different mounts in the destination tree) now degrade gracefully per-link instead of silently dropping the file. Fallback chain: `fs::hard_link` → relative symlink with resolution verification (Unix only; Windows skips to copy) → full `fs::copy` as last resort. Adds `files_symlinked` and `files_fallback_copied` counters to `CopyResult`.
+
 ## [0.1.1] - 2026-06-24
 
 ### Security
