@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 readme.workspace = true
 description = "CLI for accroître — high-speed file copier with deduplication and SSH streaming."
-publish = false
 
 [[bin]]
 name = "accro"
