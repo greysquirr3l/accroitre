@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-07-10
+
+### Changed
+
+- **CI: enable `accroitre-cli` in crates.io publish workflow** — the release workflow now publishes both `accroitre` (library) and `accroitre-cli` (binary) to crates.io, with a 30-second delay between publishes to allow registry synchronization.
+
+### Fixed
+
+- **Add missing crate metadata to `accroitre-cli`** — added `keywords` and `categories` to `accroitre-cli/Cargo.toml` to satisfy clippy's `cargo_common_metadata` lint for publishable crates.
+
 ## [0.2.3] - 2026-07-10
 
 ### Added
