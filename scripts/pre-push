@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Pre-push hook for accroitre
+# Runs tests, lints, and build checks before pushing to remote
+
+set -e
+
+echo "Running pre-push checks..."
+
+# Run tests
+echo "→ Running tests..."
+cargo test --workspace
+
+# Run clippy with warnings as errors
+echo "→ Running clippy..."
+cargo clippy --workspace -- -D warnings -W clippy::pedantic
+
+# Ensure release build works
+echo "→ Building release..."
+cargo build --release --workspace
+
+# Verify documentation builds
+echo "→ Building documentation..."
+cargo doc --workspace --no-deps
+
+echo "✓ Pre-push checks passed"

@@ -25,6 +25,15 @@ ignore = [
     # — accroitre does not, so this is informational. Fix requires
     # bumping rand across the dependency graph.
     "RUSTSEC-2026-0097",
+    # RUSTSEC-2026-0204 (crossbeam-epoch invalid pointer dereference):
+    # transitive via rayon's thread-local work queues. We don't trigger
+    # the unsafe path in the `fmt::Pointer` impl. Fix requires crossbeam
+    # >= 0.9.20; tracked for next dependency bump.
+    "RUSTSEC-2026-0204",
+    # RUSTSEC-2026-0190 (anyhow unsound Error::downcast_mut): we use
+    # anyhow only in the CLI binary crate for error aggregation; we do
+    # not call the affected unsound method. Fix requires anyhow >= 1.0.103.
+    "RUSTSEC-2026-0190",
 ]
 
 [licenses]
