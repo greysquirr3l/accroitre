@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-10
+
+### Added
+
+- **Publish `accroitre-cli` to crates.io** — the CLI binary crate is now published alongside the library crate, enabling `cargo install accroitre-cli` for direct installation of the `accro` command-line tool.
+
 ## [0.2.2] - 2026-06-25
 
 ### Fixed
