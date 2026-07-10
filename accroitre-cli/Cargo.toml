@@ -5,8 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "../README.md"
 description = "CLI for accroître — high-speed file copier with deduplication and SSH streaming."
+keywords = ["file-copy", "deduplication", "ssh", "backup", "cli"]
+categories = ["command-line-utilities", "filesystem"]
 
 [[bin]]
 name = "accro"
