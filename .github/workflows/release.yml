@@ -188,14 +188,31 @@ jobs:
           fi
           echo "Version check passed: $CRATE_VERSION"
 
-      - name: Publish accroitre to crates.io
+      - name: Publish accroitre and accroitre-cli to crates.io
         run: |
           CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "accroitre") | .version')
+          
+          # Publish accroitre (library crate) first
           if cargo publish --package accroitre --locked 2>&1 | tee /tmp/publish.log; then
             echo "accroitre@$CRATE_VERSION published successfully"
           elif grep -q "already exists" /tmp/publish.log; then
             echo "accroitre@$CRATE_VERSION already published, continuing"
+          else
+            echo "Publish failed with unexpected error:"
+            cat /tmp/publish.log
+            exit 1
+          fi
+          
+          # Wait for accroitre to be available on the registry before publishing accroitre-cli
+          # (which depends on it)
+          sleep 30
+          
+          # Publish accroitre-cli (binary crate)
+          if cargo publish --package accroitre-cli --locked 2>&1 | tee /tmp/publish.log; then
+            echo "accroitre-cli@$CRATE_VERSION published successfully"
+          elif grep -q "already exists" /tmp/publish.log; then
+            echo "accroitre-cli@$CRATE_VERSION already published, continuing"
           else
             echo "Publish failed with unexpected error:"
             cat /tmp/publish.log
