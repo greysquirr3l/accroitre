@@ -96,6 +96,18 @@ accro copy --log-file run.jsonl /mnt/source /mnt/backup
 # Compute a hash without copying
 accro hash --algorithm blake3 ./large-file.bin
 
+# The same, as JSON lines — this is what the remote side runs for dedup
+accro hash --json --algorithm xxhash128 ./large-file.bin
+
+# Copy to a remote host over SSH (no SFTP server required on the remote)
+accro copy /mnt/data user@nas.example.com:/mnt/backup
+
+# Copy from a remote host
+accro copy admin@server.example.com:/var/log ./local-logs
+
+# Copy straight from one host to another, without going through this machine
+accro copy user@host1:/data user@host2:/backup
+
 # Self-update
 accro update
 ```
@@ -140,7 +152,34 @@ A pre-flight `statvfs`/`GetDiskFreeSpaceExW` check guards against running out of
 
 Re-hashes the destination files and compares against source hashes (sizes first as a cheap filter). Reports `VerifyError::HashMismatch` or `SizeMismatch` per failure with the offending path.
 
-### 5. Persist (`accroitre::adapters::manifest`, `::cache`)
+### 5. Remote transfers (`accroitre::adapters::ssh`, `::ssh_tar`, `::remote_fs`)
+
+A remote path is written as `user@host:/path`. The remote end needs nothing but a POSIX shell — no SFTP server, no agent, no extra packages.
+
+**Authentication** is tried in this order, and the first one that succeeds wins:
+
+1. `~/.ssh/id_ed25519` (or the file given by `--ssh-src-key` / `--ssh-dst-key`)
+2. the SSH agent (`--ssh-agent`)
+3. a password (`--ssh-src-password` / `--ssh-dst-password`)
+
+Host keys are verified against `~/.ssh/known_hosts` (or `--ssh-known-hosts`). Passing `--ssh-strict-host-key` refuses to connect to a host that is not already in that file; without it, an unknown host key is accepted and the connection proceeds.
+
+**Listing** the remote tree runs `find` plus `stat` over the exec channel, so no directory metadata is transferred.
+
+**Deduplication** happens where the data already is. The remote files are hashed in a chain of methods, and the first one that hashes everything wins:
+
+1. `accro hash --json --algorithm <algo>` — the native binary, when the remote has an `accro` that is new enough. Install it with `cargo install accroitre-cli` on the remote host.
+2. `xxhsum -H128` — XXH3-128, byte-compatible with the local `xxh3_128` digest.
+3. `sha256sum`.
+4. Streaming the file contents over SSH and hashing them locally.
+
+A tool that is present but broken — an old `accro` without the `hash` subcommand, for instance — is skipped in favour of the next method.
+
+**Transfer** uses tar over the exec channel: small files are packed into one in-memory tar archive per batch and unpacked with `tar xf -` on the remote, while large files are streamed individually. Duplicates are materialised as hard-links on the destination (`ln -f`), so the second copy of a file costs an inode rather than its bytes.
+
+**Relays** (`user@host1:/path` → `user@host2:/path`) are direct: the source host tars the files and the destination host untars them, so the content never travels through the local machine.
+
+### 6. Persist (`accroitre::adapters::manifest`, `::cache`)
 
 - **`.accroitre-manifest.json`** — per-file completion status (path, size, source hash, status). Atomically written via temp-file + rename. Survives crashes and `Ctrl-C`.
 - **`.accroitre-cache.db`** — SQLite cache (WAL mode) of `(path, size, mtime, hash, algorithm)` keyed by path. Stale entries are invalidated on size or mtime mismatch. Cross-run dedup skips re-hashing unchanged files entirely.
@@ -199,13 +238,19 @@ accroitre/
 │   │                   #   (SqliteCache, CopyManifest, JsonLog, SshAdapter,
 │   │                   #    DestLock, etc.)
 │   └── Cargo.toml
-└── accroitre-cli/      # Binary — produces `accro`
-    └── src/
-        ├── main.rs     # Clap derive CLI; subcommands: copy, hash, version, update
-        ├── pipeline.rs # End-to-end orchestration: scan → hash → dedup →
-        │               #   copy → verify → manifest
-        ├── tui.rs      # Braille spinners + multi-bar progress via indicatif
-        └── update.rs   # GitHub releases fetch + SHA-256 verification + atomic swap
+├── accroitre-cli/      # Binary — produces `accro`
+│   ├── src/
+│   │   ├── lib.rs     # Library target so the pipelines can be tested
+│   │   ├── main.rs     # Clap derive CLI; subcommands: copy, hash, version, update
+│   │   ├── cli.rs      # Argument structs and the user@host:/path parser
+│   │   ├── pipeline.rs # End-to-end orchestration: scan → hash → dedup →
+│   │   │               #   copy → verify → manifest
+│   │   ├── remote_pipeline.rs # Local ⇄ SSH orchestration: remote listing,
+│   │   │               #   remote hashing, tar streaming, hard-linking
+│   │   ├── hash_cmd.rs # `accro hash --json`, the remote dedup helper
+│   │   ├── tui.rs      # Braille spinners + multi-bar progress via indicatif
+│   │   └── update.rs   # GitHub releases fetch + SHA-256 verification + atomic swap
+└── testkit/            # Shared test doubles (in-process SSH server)
 ```
 
 The library crate is the only crate published to crates.io; the CLI crate is the consumer. The library depends on `tokio`, `rusqlite`, `russh`, and `indicatif` (an I/O-framework exception), but the `domain` module is pure Rust with zero framework dependencies — usable in `no_std`-adjacent contexts if the optional I/O adapters are excluded.
@@ -233,6 +278,8 @@ cargo build --workspace
 ```
 
 Tests return `Result<(), Box<dyn std::error::Error>>` and use `?` exclusively — no `.unwrap()`, `.expect()`, or `panic!()` in test code (memory file `nick.md`, lines 60–66).
+
+The remote paths are covered end to end. `testkit/ssh_server.rs` runs a real SSH server in-process that executes commands through the local shell, so the integration tests in `accroitre/tests/ssh_transfer.rs` and `accroitre-cli/tests/` exercise the actual transport — authentication, tar streaming, remote listing, remote hashing and hard-linking — rather than a mock of it. `accroitre-cli/tests/cli_transfer.rs` drives the `accro` binary itself.
 
 ## Contributing
 

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Remote transfers over SSH** — `accro copy user@host:/path` and `accro copy /local user@host:/path` now work end to end, with no SFTP server required on the remote:
+  - `accroitre::adapters::ssh` — the `SshAdapter` connection: key, agent and password authentication, `known_hosts` verification and the `--ssh-strict-host-key` policy.
+  - `accroitre::adapters::ssh_tar` — tar-over-exec streaming. Small files are packed into one in-memory tar archive per batch and unpacked with `tar xf -` on the remote; duplicates are materialised as hard-links with `ln -f`.
+  - `accroitre::adapters::remote_fs` — remote listing via `find` + `stat`, so no directory metadata crosses the wire.
+  - `accroitre::adapters::remote_dedup` — remote-side hashing, so duplicates are detected where the data already is instead of being downloaded first.
+  - `accroitre-cli::remote_pipeline` — the local ⇄ SSH orchestration, including host-to-host relays that never route the content through the local machine.
+  - `accro hash --json --algorithm <xxhash128|blake3>` — the helper the remote side runs for deduplication. Install `accroitre-cli` on the remote host to get it.
+- **`accroitre-cli` gained a library target** — the crate now exposes `accroitre_cli::remote_pipeline` and friends as a library alongside the `accro` binary, which lets the copy pipelines be driven — and tested — from outside the binary.
+
+### Fixed
+
+- **Remote deduplication found no duplicates** — the `xxhsum` and `sha256sum` fallbacks key their hash map by the relative name the tool was given, while the caller looks the hashes up by the full path of the entry. Every lookup missed, so no file was ever recognised as a duplicate. The parsed names are now resolved back to the full entry paths.
+- **A broken remote hash tool failed the whole transfer** — `accro hash` on a remote that runs an older `accro` without the `hash` subcommand returned a non-zero exit status that was propagated as a fatal error. The hashing methods are now tried in order of preference, a method that hashes fewer files than requested is passed over, and streaming the content for local hashing remains the guaranteed last resort.
+
 ## [0.3.0] - 2026-10-23
 
 ### Changed
