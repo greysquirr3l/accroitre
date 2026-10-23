@@ -1,21 +1,25 @@
 //! SSH transport adapter using `russh`.
 //!
-//! Provides an async SSH client that supports password and key-based
-//! authentication, connection reuse via multiplexed channels, known-hosts
-//! verification, configurable timeouts, and auth retry.
+//! Provides an async SSH client that supports password, key-file and
+//! ssh-agent authentication, connection reuse via multiplexed channels,
+//! known-hosts verification, configurable timeouts, and auth retry.
 
-use std::future::{Future, ready};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use russh::client::{self, AuthResult, Config, Handle, Msg};
 use russh::keys::PublicKey;
-use russh::{Channel, ChannelMsg, Disconnect};
+use russh::keys::agent::AgentIdentity;
+use russh::keys::agent::client::AgentClient;
+use russh::keys::known_hosts;
+use russh::{Channel, ChannelMsg, Disconnect, MethodSet};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use crate::domain::SshError;
+use crate::domain::{CopyError, FileEntry, SshError, TarStreamConfig, TarStreamResult};
+use crate::ports::SshPort;
 
 /// Maximum number of authentication retry attempts.
 const MAX_AUTH_RETRIES: u32 = 3;
@@ -30,7 +34,7 @@ const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_mins(5);
 
 /// SSH authentication method.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum AuthMethod {
     /// Password-based authentication.
     Password(String),
@@ -39,6 +43,23 @@ pub enum AuthMethod {
         path: PathBuf,
         passphrase: Option<String>,
     },
+    /// Delegate authentication to a running SSH agent.
+    ///
+    /// On Unix the agent is located through `SSH_AUTH_SOCK`; on Windows the
+    /// Pageant agent is used.
+    #[default]
+    Agent,
+}
+
+/// How server host keys are verified against the `known_hosts` file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KnownHostsPolicy {
+    /// Unknown hosts are rejected; the transfer fails with an actionable error.
+    Strict,
+    /// Unknown hosts are accepted once and recorded in the `known_hosts` file.
+    /// A host key that *changes* is always rejected.
+    #[default]
+    TrustOnFirstUse,
 }
 
 /// Configuration for the SSH adapter.
@@ -58,6 +79,8 @@ pub struct SshConfig {
     pub command_timeout: Duration,
     /// Path to `known_hosts` file (default: `~/.ssh/known_hosts`).
     pub known_hosts_path: Option<PathBuf>,
+    /// Policy applied when the server host key is unknown.
+    pub known_hosts_policy: KnownHostsPolicy,
 }
 
 impl SshConfig {
@@ -72,6 +95,43 @@ impl SshConfig {
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
             known_hosts_path: None,
+            known_hosts_policy: KnownHostsPolicy::TrustOnFirstUse,
+        }
+    }
+}
+
+/// Error raised by the SSH client handler.
+///
+/// Wraps `russh`'s own error type so that host-key verification failures can
+/// carry an actionable message instead of a generic "unknown key".
+#[derive(Debug)]
+enum ClientHandlerError {
+    /// An error raised by `russh` itself.
+    Ssh(russh::Error),
+    /// Host key verification could not be completed.
+    HostKey(String),
+}
+
+impl From<russh::Error> for ClientHandlerError {
+    fn from(error: russh::Error) -> Self {
+        Self::Ssh(error)
+    }
+}
+
+impl std::fmt::Display for ClientHandlerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ssh(e) => write!(f, "{e}"),
+            Self::HostKey(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for ClientHandlerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Ssh(e) => Some(e),
+            Self::HostKey(_) => None,
         }
     }
 }
@@ -81,34 +141,83 @@ impl SshConfig {
 /// Handles server key verification against `known_hosts`.
 struct ClientHandler {
     known_hosts_path: Option<PathBuf>,
+    known_hosts_policy: KnownHostsPolicy,
+    host: String,
+    port: u16,
+}
+
+impl ClientHandler {
+    /// Verify a server host key against the configured `known_hosts` file.
+    ///
+    /// Returns `Ok(true)` when the key may be used for the connection.
+    fn verify_server_key(&self, server_public_key: &PublicKey) -> Result<bool, SshError> {
+        let Some(kh_path) = self.known_hosts_path.as_ref() else {
+            // Without a known_hosts file there is nothing to verify against.
+            // Accepting the key is the only option; the CLI warns about it.
+            debug!("no known_hosts file configured — accepting server key on first use");
+            return Ok(true);
+        };
+
+        match known_hosts::check_known_hosts_path(&self.host, self.port, server_public_key, kh_path)
+        {
+            Ok(true) => {
+                debug!(
+                    "server key for {}:{} matches known_hosts",
+                    self.host, self.port
+                );
+                Ok(true)
+            }
+            Ok(false) => match self.known_hosts_policy {
+                KnownHostsPolicy::Strict => {
+                    warn!(
+                        "unknown server key for {}:{} — rejected (strict host key checking)",
+                        self.host, self.port
+                    );
+                    Ok(false)
+                }
+                KnownHostsPolicy::TrustOnFirstUse => {
+                    info!(
+                        "unknown server key for {}:{} — recording it in {}",
+                        self.host,
+                        self.port,
+                        kh_path.display()
+                    );
+                    known_hosts::learn_known_hosts_path(
+                        &self.host,
+                        self.port,
+                        server_public_key,
+                        kh_path,
+                    )
+                    .map_err(|e| SshError::Key(format!("cannot record host key: {e}")))?;
+                    Ok(true)
+                }
+            },
+            Err(russh::keys::Error::KeyChanged { line }) => {
+                warn!(
+                    "server key for {}:{} changed since known_hosts line {line} — rejected",
+                    self.host, self.port
+                );
+                Ok(false)
+            }
+            Err(e) => Err(SshError::Key(format!("known_hosts lookup failed: {e}"))),
+        }
+    }
 }
 
 impl client::Handler for ClientHandler {
-    type Error = russh::Error;
+    type Error = ClientHandlerError;
 
     fn check_server_key(
         &mut self,
         server_public_key: &PublicKey,
     ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
-        // If we have a known_hosts file, verify the key against it.
-        if let Some(ref kh_path) = self.known_hosts_path
-            && kh_path.exists()
-        {
-            debug!(
-                "checking server key against known_hosts at {}",
-                kh_path.display()
-            );
-            // For now, accept the key and log it. Full known_hosts parsing
-            // is deferred to when we have a richer CLI interaction model.
-            // TODO(T16): Implement interactive known_hosts prompting in CLI wiring.
-            let _ = server_public_key;
-            return ready(Ok(true));
+        let result = self.verify_server_key(server_public_key);
+        async move {
+            match result {
+                Ok(ok) => Ok(ok),
+                Err(e) => Err(ClientHandlerError::HostKey(e.to_string())),
+            }
         }
-
-        // Default: accept the key (first-use trust). The CLI layer (T16) will
-        // add interactive prompting for unknown hosts.
-        debug!("no known_hosts file configured — accepting server key on first use");
-        ready(Ok(true))
     }
 }
 
@@ -147,6 +256,9 @@ impl SshAdapter {
 
         let handler = ClientHandler {
             known_hosts_path: self.config.known_hosts_path.clone(),
+            known_hosts_policy: self.config.known_hosts_policy,
+            host: self.config.host.clone(),
+            port: self.config.port,
         };
 
         let addr = format!("{}:{}", self.config.host, self.config.port);
@@ -312,15 +424,18 @@ impl SshAdapter {
             );
 
             let result = match &self.config.auth {
-                AuthMethod::Password(password) => {
-                    handle
-                        .authenticate_password(&self.config.user, password)
-                        .await
-                }
-                AuthMethod::KeyFile { path, passphrase } => {
-                    self.authenticate_with_key(handle, path, passphrase.as_deref())
-                        .await
-                }
+                AuthMethod::Password(password) => handle
+                    .authenticate_password(&self.config.user, password)
+                    .await
+                    .map_err(|e| SshError::Key(format!("password authentication failed: {e}"))),
+                AuthMethod::KeyFile { path, passphrase } => self
+                    .authenticate_with_key(handle, path, passphrase.as_deref())
+                    .await
+                    .map_err(|e| SshError::Key(format!("key authentication failed: {e}"))),
+                AuthMethod::Agent => self
+                    .authenticate_with_agent(handle)
+                    .await
+                    .map_err(|e| SshError::Key(format!("agent authentication failed: {e}"))),
             };
 
             match result {
@@ -350,6 +465,72 @@ impl SshAdapter {
             user: self.config.user.clone(),
             host: self.config.host.clone(),
         })
+    }
+
+    /// Authenticate using the SSH agent.
+    ///
+    /// Every identity the agent offers is tried in turn; the first one the
+    /// server accepts wins.
+    async fn authenticate_with_agent(
+        &self,
+        handle: &mut Handle<ClientHandler>,
+    ) -> Result<AuthResult, SshError> {
+        let mut agent = connect_agent().await?;
+
+        let identities = agent
+            .request_identities()
+            .await
+            .map_err(|e| SshError::Key(format!("cannot list agent identities: {e}")))?;
+
+        if identities.is_empty() {
+            return Err(SshError::Key("ssh-agent holds no identities".to_string()));
+        }
+
+        let mut last_failure = None;
+        for identity in &identities {
+            let result = match identity {
+                AgentIdentity::PublicKey { key, .. } => {
+                    handle
+                        .authenticate_publickey_with(
+                            &self.config.user,
+                            key.clone(),
+                            None,
+                            &mut agent,
+                        )
+                        .await
+                }
+                AgentIdentity::Certificate { certificate, .. } => {
+                    handle
+                        .authenticate_certificate_with(
+                            &self.config.user,
+                            certificate.clone(),
+                            None,
+                            &mut agent,
+                        )
+                        .await
+                }
+            };
+
+            match result {
+                Ok(AuthResult::Success) => return Ok(AuthResult::Success),
+                Ok(failure) => {
+                    debug!("agent identity rejected: {failure:?}");
+                    last_failure = Some(failure);
+                }
+                Err(e) => {
+                    debug!("agent identity failed to sign: {e}");
+                    last_failure = Some(AuthResult::Failure {
+                        remaining_methods: MethodSet::empty(),
+                        partial_success: false,
+                    });
+                }
+            }
+        }
+
+        Ok(last_failure.unwrap_or_else(|| AuthResult::Failure {
+            remaining_methods: MethodSet::empty(),
+            partial_success: false,
+        }))
     }
 
     /// Authenticate using an SSH key file.
@@ -404,6 +585,69 @@ impl SshAdapter {
                 source: std::io::Error::new(std::io::ErrorKind::TimedOut, "command timed out"),
             }),
         }
+    }
+}
+
+/// Connect to the local SSH agent.
+///
+/// On Unix the agent socket is located through `SSH_AUTH_SOCK`; on Windows the
+/// Pageant agent is used.
+#[cfg(unix)]
+async fn connect_agent() -> Result<AgentClient<tokio::net::UnixStream>, SshError> {
+    AgentClient::connect_env()
+        .await
+        .map_err(|e| SshError::Key(format!("cannot connect to ssh-agent: {e}")))
+}
+
+/// Connect to the local SSH agent.
+///
+/// On Windows the Pageant agent is used.
+#[cfg(windows)]
+async fn connect_agent() -> Result<AgentClient<pageant::PageantStream>, SshError> {
+    AgentClient::connect_pageant()
+        .await
+        .map_err(|e| SshError::Key(format!("cannot connect to ssh-agent: {e}")))
+}
+
+impl SshPort for SshAdapter {
+    async fn connect(&self) -> Result<(), SshError> {
+        Self::connect(self).await
+    }
+
+    async fn exec_command(&self, command: &str) -> Result<Vec<u8>, SshError> {
+        Self::exec_command(self, command).await
+    }
+
+    async fn stream_tar_upload(
+        &self,
+        entries: &[FileEntry],
+        source_root: &Path,
+        remote_dest: &str,
+        config: &TarStreamConfig,
+    ) -> Result<TarStreamResult, CopyError> {
+        crate::adapters::ssh_tar::upload_tar_stream(self, entries, source_root, remote_dest, config)
+            .await
+    }
+
+    async fn stream_tar_download(
+        &self,
+        remote_entries: &[FileEntry],
+        remote_root: &str,
+        local_dest: &Path,
+        config: &TarStreamConfig,
+    ) -> Result<TarStreamResult, CopyError> {
+        crate::adapters::ssh_tar::download_tar_stream(
+            self,
+            remote_entries,
+            remote_root,
+            local_dest,
+            config,
+        )
+        .await
+    }
+
+    async fn disconnect(&self) -> Result<(), SshError> {
+        Self::disconnect(self).await
     }
 }
 
@@ -462,6 +706,7 @@ mod tests {
             connect_timeout: Duration::from_millis(500),
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
             known_hosts_path: None,
+            known_hosts_policy: KnownHostsPolicy::TrustOnFirstUse,
         };
 
         let adapter = SshAdapter::new(config);

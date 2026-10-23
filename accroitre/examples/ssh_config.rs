@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use accroitre::{AuthMethod, SshAdapter, SshConfig};
+use accroitre::{AuthMethod, KnownHostsPolicy, SshAdapter, SshConfig};
 
 fn main() {
     // Connect using a key file. Other AuthMethod variants:
@@ -30,6 +30,7 @@ fn main() {
         connect_timeout: Duration::from_secs(10),
         command_timeout: Duration::from_mins(5),
         known_hosts_path: Some(PathBuf::from("/home/me/.ssh/known_hosts")),
+        known_hosts_policy: KnownHostsPolicy::TrustOnFirstUse,
     };
 
     println!(

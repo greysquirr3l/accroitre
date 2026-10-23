@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use tracing::{debug, info, warn};
 
+use crate::adapters::shell::shell_escape;
 use crate::adapters::ssh::SshAdapter;
 use crate::domain::{FileEntry, Hash, HashAlgorithm, SshError};
 
@@ -81,6 +82,12 @@ pub async fn detect_remote_hash_method(adapter: &SshAdapter) -> Result<RemoteHas
 
 /// Hash remote files using the best available method.
 ///
+/// The detection only reports which tools exist; a tool that is present but
+/// broken — an old `accro` without the `hash` subcommand, for instance — is
+/// skipped in favour of the next method.  The method that hashed the most
+/// files wins, and streaming the content for local hashing is the guaranteed
+/// last resort.
+///
 /// # Errors
 ///
 /// Returns `SshError` on SSH communication failures.
@@ -90,25 +97,74 @@ pub async fn hash_remote_files(
     remote_root: &str,
     algorithm: HashAlgorithm,
 ) -> Result<RemoteHashResult, SshError> {
-    let method = detect_remote_hash_method(adapter).await?;
+    let preferred = detect_remote_hash_method(adapter).await?;
 
-    match method {
-        RemoteHashMethod::AccroNative => {
-            hash_with_accro(adapter, entries, remote_root, algorithm).await
-        }
-        RemoteHashMethod::Sha256sum => hash_with_sha256sum(adapter, entries, remote_root).await,
-        RemoteHashMethod::Xxhsum => hash_with_xxhsum(adapter, entries, remote_root).await,
-        RemoteHashMethod::StreamLocal => {
-            hash_via_stream(adapter, entries, remote_root, algorithm).await
+    // Every method is a candidate: the preferred one first, then the others
+    // in order of preference, and finally the streaming fallback.
+    let mut candidates = vec![preferred];
+    for method in [
+        RemoteHashMethod::AccroNative,
+        RemoteHashMethod::Xxhsum,
+        RemoteHashMethod::Sha256sum,
+        RemoteHashMethod::StreamLocal,
+    ] {
+        if !candidates.contains(&method) {
+            candidates.push(method);
         }
     }
+
+    let mut best: Option<RemoteHashResult> = None;
+    let mut last_error: Option<SshError> = None;
+
+    for method in candidates {
+        let result = match method {
+            RemoteHashMethod::AccroNative => hash_with_accro(adapter, entries, algorithm).await,
+            RemoteHashMethod::Sha256sum => hash_with_sha256sum(adapter, entries, remote_root).await,
+            RemoteHashMethod::Xxhsum => hash_with_xxhsum(adapter, entries, remote_root).await,
+            RemoteHashMethod::StreamLocal => {
+                hash_via_stream(adapter, entries, remote_root, algorithm).await
+            }
+        };
+
+        match result {
+            Ok(result) => {
+                debug!(
+                    "remote hashing via {method:?}: {}/{} files hashed",
+                    result.hashes.len(),
+                    entries.len()
+                );
+                if result.hashes.len() == entries.len() {
+                    return Ok(result);
+                }
+                if best
+                    .as_ref()
+                    .is_none_or(|current| result.hashes.len() > current.hashes.len())
+                {
+                    best = Some(result);
+                }
+            }
+            Err(e) => {
+                warn!("remote hashing via {method:?} failed: {e}");
+                last_error = Some(e);
+            }
+        }
+    }
+
+    if let Some(result) = best {
+        return Ok(result);
+    }
+
+    Err(last_error.unwrap_or_else(|| SshError::Key("no remote hashing method worked".to_owned())))
 }
 
 /// Hash files using the native `accro hash --json` command.
+///
+/// The paths are passed verbatim so that the JSON records carry the same
+/// absolute paths as the entries, which keeps the parsed map keyed the way
+/// the caller expects.
 async fn hash_with_accro(
     adapter: &SshAdapter,
     entries: &[FileEntry],
-    remote_root: &str,
     algorithm: HashAlgorithm,
 ) -> Result<RemoteHashResult, SshError> {
     let algo_flag = match algorithm {
@@ -116,12 +172,8 @@ async fn hash_with_accro(
         HashAlgorithm::Blake3 => "--algorithm blake3",
     };
 
-    let file_list = build_file_list(entries, remote_root);
-    let cmd = format!(
-        "cd {} && accro hash --json {algo_flag} {}",
-        shell_escape(remote_root),
-        file_list
-    );
+    let file_list = build_absolute_file_list(entries);
+    let cmd = format!("accro hash --json {algo_flag} {file_list}");
 
     debug!("running accro hash on {} files", entries.len());
     let output = adapter.exec_command(&cmd).await?;
@@ -144,6 +196,7 @@ async fn hash_with_sha256sum(
 ) -> Result<RemoteHashResult, SshError> {
     let mut all_hashes = HashMap::new();
     let batches = build_path_batches(entries, remote_root, FALLBACK_BATCH_SIZE);
+    let lookup = build_relative_lookup(entries, remote_root);
 
     for (batch_idx, batch) in batches.iter().enumerate() {
         debug!(
@@ -160,7 +213,7 @@ async fn hash_with_sha256sum(
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output);
                 let parsed = parse_sha256sum_output(&stdout);
-                all_hashes.extend(parsed);
+                all_hashes.extend(resolve_relative_paths(parsed, &lookup));
             }
             Err(e) => {
                 warn!("sha256sum batch {}: {e}", batch_idx + 1);
@@ -183,6 +236,7 @@ async fn hash_with_xxhsum(
 ) -> Result<RemoteHashResult, SshError> {
     let mut all_hashes = HashMap::new();
     let batches = build_path_batches(entries, remote_root, FALLBACK_BATCH_SIZE);
+    let lookup = build_relative_lookup(entries, remote_root);
 
     for (batch_idx, batch) in batches.iter().enumerate() {
         debug!(
@@ -203,7 +257,7 @@ async fn hash_with_xxhsum(
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output);
                 let parsed = parse_xxhsum_output(&stdout);
-                all_hashes.extend(parsed);
+                all_hashes.extend(resolve_relative_paths(parsed, &lookup));
             }
             Err(e) => {
                 warn!("xxhsum batch {}: {e}", batch_idx + 1);
@@ -269,16 +323,11 @@ fn hash_bytes(data: &[u8], algorithm: HashAlgorithm) -> Hash {
     }
 }
 
-/// Build a shell-escaped file list for remote commands.
-fn build_file_list(entries: &[FileEntry], remote_root: &str) -> String {
+/// Build a shell-escaped list of absolute file paths for remote commands.
+fn build_absolute_file_list(entries: &[FileEntry]) -> String {
     entries
         .iter()
-        .filter_map(|e| {
-            e.path
-                .strip_prefix(remote_root)
-                .ok()
-                .map(|p| shell_escape(&p.to_string_lossy()))
-        })
+        .map(|e| shell_escape(&e.path.to_string_lossy()))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -303,10 +352,39 @@ fn build_path_batches(
         .collect()
 }
 
-/// Escape a shell argument.
-fn shell_escape(s: &str) -> String {
-    let escaped = s.replace('\'', "'\\''");
-    format!("'{escaped}'")
+/// Map the relative name of every entry to its full path.
+///
+/// The fallback hashers run inside the remote root, so the tools report the
+/// names they were given — relative paths — while the caller looks the hashes
+/// up by the full path of the entry.
+fn build_relative_lookup(entries: &[FileEntry], remote_root: &str) -> HashMap<String, PathBuf> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .path
+                .strip_prefix(remote_root)
+                .ok()
+                .map(|relative| (relative.to_string_lossy().into_owned(), entry.path.clone()))
+        })
+        .collect()
+}
+
+/// Rewrite the relative keys of a parsed hash map to the full entry paths.
+///
+/// Keys that do not match an entry are dropped: a hash for an unknown file
+/// cannot be attributed to anything.
+fn resolve_relative_paths(
+    parsed: HashMap<PathBuf, Hash>,
+    lookup: &HashMap<String, PathBuf>,
+) -> HashMap<PathBuf, Hash> {
+    parsed
+        .into_iter()
+        .filter_map(|(path, hash)| {
+            let relative = path.to_string_lossy().into_owned();
+            lookup.get(&relative).map(|full| (full.clone(), hash))
+        })
+        .collect()
 }
 
 /// Parse `accro hash --json` output.

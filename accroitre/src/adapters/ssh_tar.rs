@@ -11,41 +11,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use crate::adapters::ssh::SshAdapter;
-use crate::domain::{CopyError, FileEntry};
-
-/// Default batch size target for chunked tar streaming (~100 MB).
-const DEFAULT_BATCH_SIZE: u64 = 100 * 1024 * 1024;
-
-/// Result of a tar streaming operation.
-#[derive(Debug)]
-pub struct TarStreamResult {
-    /// Total bytes transferred.
-    pub bytes_transferred: u64,
-    /// Number of files transferred.
-    pub files_transferred: u64,
-    /// Number of batches.
-    pub batches_completed: u64,
-    /// Errors encountered (non-fatal, per-batch).
-    pub errors: Vec<CopyError>,
-}
-
-/// Configuration for tar streaming over SSH.
-#[derive(Debug, Clone)]
-pub struct TarStreamConfig {
-    /// Target batch size in bytes (default: ~100 MB).
-    pub batch_size: u64,
-    /// Enable SSH compression (equivalent to `ssh -C`).
-    pub compress: bool,
-}
-
-impl Default for TarStreamConfig {
-    fn default() -> Self {
-        Self {
-            batch_size: DEFAULT_BATCH_SIZE,
-            compress: false,
-        }
-    }
-}
+use crate::domain::{CopyError, FileEntry, TarStreamConfig, TarStreamResult};
 
 /// A batch of files to transfer in a single tar stream.
 struct Batch {

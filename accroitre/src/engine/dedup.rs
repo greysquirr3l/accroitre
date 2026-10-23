@@ -86,6 +86,52 @@ pub fn build_dedup_plan(
         }
     }
 
+    assemble_plan(
+        unique_entries,
+        unhashed,
+        hash_groups,
+        source_root,
+        dest_root,
+    )
+}
+
+/// Build a `CopyPlan` from entries whose hashes are already known.
+///
+/// Used for remote sources, where the content hash was computed on the remote
+/// host and cannot be recomputed locally.  Entries without a hash are treated
+/// as unique.
+///
+/// # Errors
+///
+/// This function does not return a top-level error.
+#[must_use]
+pub fn build_dedup_plan_from_hashes(
+    entries: Vec<FileEntry>,
+    source_root: &Path,
+    dest_root: &Path,
+) -> (CopyPlan, DedupStats) {
+    let mut hash_groups: HashMap<Hash, Vec<FileEntry>> = HashMap::new();
+    let mut unhashed: Vec<FileEntry> = Vec::new();
+
+    for entry in entries {
+        if let Some(hash) = entry.hash.clone() {
+            hash_groups.entry(hash).or_default().push(entry);
+        } else {
+            unhashed.push(entry);
+        }
+    }
+
+    assemble_plan(Vec::new(), unhashed, hash_groups, source_root, dest_root)
+}
+
+/// Assemble the copy plan from the three buckets produced by the dedup passes.
+fn assemble_plan(
+    unique_entries: Vec<FileEntry>,
+    unhashed: Vec<FileEntry>,
+    hash_groups: HashMap<Hash, Vec<FileEntry>>,
+    source_root: &Path,
+    dest_root: &Path,
+) -> (CopyPlan, DedupStats) {
     // Build the copy plan.
     let mut plan = CopyPlan::new(source_root.to_path_buf(), dest_root.to_path_buf());
     let mut bytes_saved: u64 = 0;

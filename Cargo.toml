@@ -70,6 +70,9 @@ console = "0.15"
 # SSH
 russh = "0.61"
 
+# Windows SSH agent (Pageant)
+pageant = "0.2"
+
 # SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }
 

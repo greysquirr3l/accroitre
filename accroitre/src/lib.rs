@@ -41,7 +41,7 @@ pub mod ports;
 // Domain types
 pub use domain::{
     CopyError, CopyPlan, CopyStats, DedupGroup, FileEntry, Hash, HashAlgorithm, SpaceError,
-    SshError, TransferMode, VerifyError,
+    SshError, TarStreamConfig, TarStreamResult, TransferMode, VerifyError,
 };
 
 // Engine entry points
@@ -58,7 +58,7 @@ pub use engine::verify::{VerifyConfig, VerifyResult, verify_plan};
 pub use adapters::cache::{CacheError, SqliteCache};
 pub use adapters::lock::{DestLock, LockError};
 pub use adapters::manifest::{CopyManifest, FileStatus, ManifestEntry};
-pub use adapters::ssh::{AuthMethod, SshAdapter, SshConfig};
+pub use adapters::ssh::{AuthMethod, KnownHostsPolicy, SshAdapter, SshConfig};
 
 // Port traits and their default no-op implementation
 pub use ports::{NullProgress, ProgressPort, ProgressUpdate};
