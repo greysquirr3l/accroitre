@@ -111,6 +111,21 @@ jobs:
             | jq -r '.packages[] | select(.name == "accroitre") | .version')
           echo "name=accro-${{ matrix.target }}-v${version}.${{ matrix.archive }}" >> "$GITHUB_OUTPUT"
 
+      - name: Determine stable alias name
+        id: alias
+        shell: bash
+        run: |
+          # Unversioned copy of the archive, so that
+          # `releases/latest/download/<name>` keeps resolving across
+          # releases. The versioned archive stays the canonical asset.
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu) alias=accro-linux-amd64 ;;
+            aarch64-apple-darwin) alias=accro-macos-arm64 ;;
+            x86_64-pc-windows-msvc) alias=accro-windows-amd64 ;;
+            *) alias="accro-${{ matrix.target }}" ;;
+          esac
+          echo "name=${alias}.${{ matrix.archive }}" >> "$GITHUB_OUTPUT"
+
       - name: Stage release artifact (Unix)
         if: matrix.os != 'windows-latest'
         shell: bash
@@ -148,6 +163,12 @@ jobs:
         run: |
           sha256sum "${{ steps.archive.outputs.name }}" > "${{ steps.archive.outputs.name }}.sha256"
 
+      - name: Create stable alias copy
+        shell: bash
+        run: |
+          cp "${{ steps.archive.outputs.name }}" "${{ steps.alias.outputs.name }}"
+          sha256sum "${{ steps.alias.outputs.name }}" > "${{ steps.alias.outputs.name }}.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -155,6 +176,8 @@ jobs:
           path: |
             ${{ steps.archive.outputs.name }}
             ${{ steps.archive.outputs.name }}.sha256
+            ${{ steps.alias.outputs.name }}
+            ${{ steps.alias.outputs.name }}.sha256
           if-no-files-found: error
 
   publish-crates:

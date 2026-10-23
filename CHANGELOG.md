@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-23
+
 ### Changed
 
-- **MSRV raised to Rust 1.99.1** — the workspace `rust-version`, `clippy.toml` MSRV, `rust-toolchain.toml` pin, and every CI toolchain pin move from 1.96.0 to 1.99.1 (current stable). The toolchain pin is new: without `rust-toolchain.toml` a newer local stable raised clippy lints that CI's pinned toolchain does not have, so `cargo clippy` failed locally while CI stayed green.
+- **MSRV raised to Rust 1.99.1** — this is a breaking change for downstream consumers, since `rust-version` is part of the published package metadata. The workspace `rust-version`, `clippy.toml` MSRV, `rust-toolchain.toml` pin, and every CI toolchain pin move from 1.96.0 to 1.99.1 (current stable).
+- **Toolchain is now pinned via `rust-toolchain.toml`** — new file. Without it a newer local stable raises clippy lints that CI's pinned toolchain does not have, so `cargo clippy` failed locally while CI stayed green. That drift is what hid the audit failure described under *Fixed* below.
 
 ### Fixed
 
@@ -29,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `anyhow` `1.0.102` → `1.0.104` — fixes [RUSTSEC-2026-0190](https://rustsec.org/advisories/RUSTSEC-2026-0190).
   - `rand` `0.9.2` was dropped from the dependency graph entirely, fixing [RUSTSEC-2026-0097](https://rustsec.org/advisories/RUSTSEC-2026-0097) and removing `rand_chacha`/`rand_core`.
   - `chacha20` `0.10.1` → `0.10.2` and `der` `0.8.0` → `0.8.2` — clears the two yanked-crate warnings.
+  - `tokio` `1.51.0` → `1.54.1` — fixes [RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386) (`AsyncFd::new` and related constructors violate I/O safety). accroitre does not use `AsyncFd`, so the unsound path was not reachable, but the fixed release is taken anyway.
 
 ## [0.2.4] - 2026-07-10
 
