@@ -52,8 +52,9 @@ Pre-built binaries for `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and `
 
 ```bash
 # Linux x86_64
-curl -L https://github.com/greysquirr3l/accroitre/releases/latest/download/accro-linux-amd64 \
-  -o accro
+curl -L https://github.com/greysquirr3l/accroitre/releases/latest/download/accro-linux-amd64.tar.gz \
+  -o accro.tar.gz
+tar xzf accro.tar.gz
 chmod +x accro
 ./accro version
 ```

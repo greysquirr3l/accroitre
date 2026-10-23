@@ -15,7 +15,7 @@ name = "accro"
 path = "src/main.rs"
 
 [dependencies]
-accroitre = { version = "0.2.4", path = "../accroitre" }
+accroitre = { version = "0.3.0", path = "../accroitre" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 console = { workspace = true }
