@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Pre-commit hook for accroitre
+# Runs cargo fmt, gitleaks, and cargo audit before allowing commits
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Run cargo fmt and stage any changes
+echo "→ Running cargo fmt..."
+cargo fmt --all
+
+# Stage any formatting changes
+git diff --name-only | grep '\.rs$' | while read -r file; do
+  if [ -f "$file" ]; then
+    git add "$file"
+  fi
+done
+
+# Run gitleaks to detect secrets
+echo "→ Running gitleaks..."
+if ! command -v gitleaks &>/dev/null; then
+  echo "⚠️  gitleaks not installed, skipping secrets detection"
+  echo "   Install with: brew install gitleaks (macOS) or see https://github.com/gitleaks/gitleaks#installing"
+else
+  # Scan staged changes for secrets
+  gitleaks protect --staged --verbose
+fi
+
+# Run cargo deny for security and license checks (respects deny.toml)
+echo "→ Running cargo deny..."
+if ! command -v cargo-deny &>/dev/null; then
+  echo "⚠️  cargo-deny not installed, skipping security/license audit"
+  echo "   Install with: cargo install cargo-deny"
+else
+  cargo deny check advisories
+fi
+
+echo "✓ Pre-commit checks passed"

@@ -23,7 +23,7 @@ Accroître reads files in physical disk order to eliminate random seeks on spinn
 | Crate | [`accroitre`](https://crates.io/crates/accroitre) |
 | Binary | `accro` |
 | License | MIT OR Apache-2.0 |
-| MSRV | Rust 1.96.0 (edition 2024) |
+| MSRV | Rust 1.99.1 (edition 2024) |
 | Platforms | Linux, macOS, Windows |
 
 ## Installation
@@ -44,7 +44,7 @@ cd accroitre
 cargo install --path accroitre-cli --locked
 ```
 
-Requires a stable Rust toolchain ≥ 1.96.0 (`rustup toolchain install stable`).
+Requires a stable Rust toolchain ≥ 1.99.1 (`rustup toolchain install stable`).
 
 ### Pre-built binaries
 

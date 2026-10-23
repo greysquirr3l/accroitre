@@ -1,0 +1,6 @@
+[toolchain]
+# Pin the exact toolchain CI builds and audits with. Without this, a
+# newer local stable toolchain can raise lints that the pinned MSRV
+# does not have, so `cargo clippy` fails locally while CI stays green.
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

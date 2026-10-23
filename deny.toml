@@ -6,25 +6,10 @@ ignore = [
     # security vulnerability, just a maintenance signal.
     "RUSTSEC-2025-0119",
     # RUSTSEC-2023-0071 (rsa timing-side-channel): pulled in transitively
-    # by an older dependency tree (rusqlite-bundled or reqwest's TLS
-    # stack). Fix requires bumping a major-version chain; tracked.
+    # by russh -> ssh-key -> rsa. The affected rsa release is a
+    # pre-release (0.10.0-rc.18) with no fixed version published, so the
+    # advisory can only be cleared by an upstream russh/ssh-key bump.
     "RUSTSEC-2023-0071",
-    # RUSTSEC-2026-0154 (russh SSH agent frame length): both russh 0.46
-    # and russh-cryptovec 0.7 are affected; fix requires russh >= 0.58.
-    # Tracked for the next major version bump.
-    "RUSTSEC-2026-0154",
-    # RUSTSEC-2026-0153 (russh-cryptovec unchecked capacity growth):
-    # same root cause as -0154; needs russh >= 0.58. The SSH transport
-    # path is exercised only when the user explicitly opts in to SSH
-    # remote sources/destinations (not the default local-copy path).
-    "RUSTSEC-2026-0153",
-    # RUSTSEC-2026-0097 (rand 0.9 unsound with custom logger): rand is
-    # pulled transitively via the SSH/keychain stack. The unsoundness
-    # only triggers if a downstream consumer installs a custom
-    # `log`/`tracing` subscriber that calls into `rand::rng()` mid-log
-    # — accroitre does not, so this is informational. Fix requires
-    # bumping rand across the dependency graph.
-    "RUSTSEC-2026-0097",
 ]
 
 [licenses]

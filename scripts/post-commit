@@ -1,0 +1,18 @@
+#!/bin/sh
+# Coraline auto-sync hook
+# This hook keeps the graph in sync after each commit.
+# To remove: coraline hooks remove
+
+(
+  if [ ! -d ".coraline" ]; then
+    exit 0
+  fi
+
+  if command -v coraline >/dev/null 2>&1; then
+    coraline sync --quiet 2>/dev/null &
+  elif command -v cargo >/dev/null 2>&1 && [ -f "Cargo.toml" ]; then
+    cargo run -q -p coraline --bin coraline -- sync --quiet 2>/dev/null &
+  fi
+) &
+
+exit 0

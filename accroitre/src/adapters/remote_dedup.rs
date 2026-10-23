@@ -522,7 +522,7 @@ mod tests {
     fn build_path_batches_empty() {
         let entries: Vec<FileEntry> = Vec::new();
         let batches = build_path_batches(&entries, "/root", 5);
-        assert!(batches.is_empty());
+        assert_eq!(batches, Vec::<Vec<String>>::new());
     }
 
     #[test]
