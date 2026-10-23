@@ -21,7 +21,7 @@ use anyhow::{Context, Result, bail};
 use glob::Pattern;
 use tracing::debug;
 
-use crate::CopyArgs;
+use crate::cli::CopyArgs;
 use crate::tui::TuiProgress;
 
 // ── Exit codes ────────────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ pub async fn run_local_pipeline(
 
 // ── Pipeline stage helpers ────────────────────────────────────────────────────
 
-fn parse_excludes(patterns: &[String]) -> Result<Vec<Pattern>> {
+pub(crate) fn parse_excludes(patterns: &[String]) -> Result<Vec<Pattern>> {
     patterns
         .iter()
         .map(|s| Pattern::new(s).with_context(|| format!("invalid glob pattern: {s}")))
@@ -236,7 +236,7 @@ fn open_json_log(args: &CopyArgs, source: &Path, destination: &Path) -> Result<O
     }
 }
 
-async fn run_scan(
+pub(crate) async fn run_scan(
     source: &Path,
     exclude_patterns: Vec<Pattern>,
     tui: &TuiProgress,
@@ -252,7 +252,7 @@ async fn run_scan(
     Ok(result)
 }
 
-fn run_dedup(
+pub(crate) fn run_dedup(
     args: &CopyArgs,
     scan_result: accroitre::engine::scan::ScanResult,
     source: &Path,
@@ -287,7 +287,10 @@ fn run_dedup(
     }
 }
 
-fn dry_run_result(plan: &accroitre::domain::CopyPlan, dedup_stats: DedupStats) -> PipelineResult {
+pub(crate) fn dry_run_result(
+    plan: &accroitre::domain::CopyPlan,
+    dedup_stats: DedupStats,
+) -> PipelineResult {
     eprintln!(
         "Dry run: would copy {} files ({} bytes), link {} duplicates (saving {} bytes)",
         plan.entries.len(),
@@ -399,7 +402,7 @@ fn load_or_create_manifest(
     }
 }
 
-const fn cancelled_result() -> PipelineResult {
+pub(crate) const fn cancelled_result() -> PipelineResult {
     PipelineResult {
         copy_result: CopyResult {
             files_copied: 0,
@@ -468,6 +471,9 @@ mod tests {
             ssh_dst_port: 22,
             ssh_dst_key: None,
             ssh_dst_password: None,
+            ssh_agent: false,
+            ssh_known_hosts: None,
+            ssh_strict_host_key: false,
             compress: false,
             link_strategy: "hardlink".to_owned(),
         }

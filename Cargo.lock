@@ -14,6 +14,7 @@ dependencies = [
  "glob",
  "libc",
  "nix 0.29.0",
+ "pageant",
  "rayon",
  "rusqlite",
  "russh",
@@ -38,7 +39,9 @@ dependencies = [
  "console",
  "glob",
  "indicatif",
+ "rayon",
  "reqwest",
+ "russh",
  "semver",
  "serde",
  "serde_json",
@@ -47,6 +50,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]

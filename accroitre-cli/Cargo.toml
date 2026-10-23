@@ -10,6 +10,10 @@ description = "CLI for accroître — high-speed file copier with deduplication 
 keywords = ["file-copy", "deduplication", "ssh", "backup", "cli"]
 categories = ["command-line-utilities", "filesystem"]
 
+[lib]
+name = "accroitre_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "accro"
 path = "src/main.rs"
@@ -21,6 +25,7 @@ clap = { workspace = true }
 console = { workspace = true }
 glob = { workspace = true }
 indicatif = { workspace = true }
+rayon = { workspace = true }
 reqwest = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
@@ -29,11 +34,13 @@ sha2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+walkdir = { workspace = true }
 
 [build-dependencies]
 
 [dev-dependencies]
 tempfile = { workspace = true }
+russh = { workspace = true }
 
 [lints]
 workspace = true
