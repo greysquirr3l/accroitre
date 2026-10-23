@@ -20,10 +20,10 @@ jobs:
       # container, so a follow-up `run:` step cannot reach the binary.
       # Pass everything through the action's inputs instead.
       # `rust-version` updates the toolchain inside the container
-      # before cargo-deny runs; the workspace requires 1.96.0.
+      # before cargo-deny runs; the workspace requires 1.99.1.
       - name: Run cargo-deny
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          rust-version: "1.96.0"
+          rust-version: "1.99.1"
           command: check
           arguments: --all-features

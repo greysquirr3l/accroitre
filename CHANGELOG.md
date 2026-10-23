@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **MSRV raised to Rust 1.99.1** — the workspace `rust-version`, `clippy.toml` MSRV, `rust-toolchain.toml` pin, and every CI toolchain pin move from 1.96.0 to 1.99.1 (current stable). The toolchain pin is new: without `rust-toolchain.toml` a newer local stable raised clippy lints that CI's pinned toolchain does not have, so `cargo clippy` failed locally while CI stayed green.
+
+### Fixed
+
+- **Clippy lints that only appear on Rust 1.99+** — the new toolchain enables `clippy::assert_is_empty` and `clippy::unused_async_trait_impl`, which the CI lint profile treats as errors:
+  - `ssh`: the `check_server_key` handler now returns `impl Future` directly instead of an `async fn` with no `.await` in it.
+  - `remote_dedup`, `delta`, `macos_io`, `main`, `update`: empty-collection assertions changed from `assert!(x.is_empty())` to `assert_eq!`/`assert_ne!` so a failure prints the offending value.
+- **CI audit step no longer drifts from `deny.toml`** — the two advisory-ignore lists are now identical, and the five stale entries whose advisories are no longer reachable were removed. Only `RUSTSEC-2023-0071` (`rsa`, via `russh` → `ssh-key`, no fixed pre-release published) and `RUSTSEC-2025-0119` (`number_prefix`, via `indicatif`) remain ignored.
+- **`main` CI was failing on the dependency audit** — the `Audit dependencies` step errored on every push to `main` because the advisory set had grown past the inline ignore list. The `Cargo.lock` update below is what actually fixes it; adding more ignore entries would only have hidden the finding.
+
 ### Security
 
 - **Dependency updates clear 13 outstanding advisories** — the `Cargo.lock` was refreshed to pull the fixes that were available upstream, taking `cargo audit` from 13 vulnerabilities and 4 warnings to zero:
@@ -17,11 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `anyhow` `1.0.102` → `1.0.104` — fixes [RUSTSEC-2026-0190](https://rustsec.org/advisories/RUSTSEC-2026-0190).
   - `rand` `0.9.2` was dropped from the dependency graph entirely, fixing [RUSTSEC-2026-0097](https://rustsec.org/advisories/RUSTSEC-2026-0097) and removing `rand_chacha`/`rand_core`.
   - `chacha20` `0.10.1` → `0.10.2` and `der` `0.8.0` → `0.8.2` — clears the two yanked-crate warnings.
-
-### Fixed
-
-- **CI audit step no longer drifts from `deny.toml`** — the two advisory-ignore lists are now identical, and the five stale entries whose advisories are no longer reachable were removed. Only `RUSTSEC-2023-0071` (`rsa`, via `russh` → `ssh-key`, no fixed pre-release published) and `RUSTSEC-2025-0119` (`number_prefix`, via `indicatif`) remain ignored.
-- **`main` CI was failing on the dependency audit** — the `Audit dependencies` step errored on every push to `main` because the advisory set had grown past the inline ignore list. The `Cargo.lock` update above is what actually fixes it; adding more ignore entries would only have hidden the finding.
 
 ## [0.2.4] - 2026-07-10
 

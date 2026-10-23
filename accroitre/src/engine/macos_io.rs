@@ -236,7 +236,7 @@ mod tests {
 
         if try_fcopyfile(&src, &dst)? {
             let copied = fs::read(&dst)?;
-            assert!(copied.is_empty());
+            assert_eq!(copied, b"");
         }
         Ok(())
     }

@@ -297,7 +297,7 @@ mod tests {
         fs::write(dst.join(".accroitre-manifest.json"), "{}")?;
 
         let orphans = find_orphans(&[], &src, &dst);
-        assert!(orphans.is_empty());
+        assert_eq!(orphans, Vec::<PathBuf>::new());
         Ok(())
     }
 

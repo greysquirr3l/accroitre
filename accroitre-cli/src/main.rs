@@ -435,7 +435,7 @@ mod tests {
                 assert!(!args.force);
                 assert!(!args.overwrite);
                 assert!(!args.delete);
-                assert!(args.exclude.is_empty());
+                assert_eq!(args.exclude, Vec::<String>::new());
                 assert!(args.log_file.is_none());
                 assert!(!args.quiet);
                 assert_eq!(args.ssh_src_port, 22);

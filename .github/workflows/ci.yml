@@ -33,7 +33,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.96.0"
+          toolchain: "1.99.1"
           components: clippy, rustfmt
 
       - name: Cache cargo
@@ -71,7 +71,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.96.0"
+          toolchain: "1.99.1"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -82,7 +82,7 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
 
   msrv:
-    name: msrv (1.96.0)
+    name: msrv (1.99.1)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
       - name: Install Rust toolchain (MSRV)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.96.0"
+          toolchain: "1.99.1"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2

@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn platform_asset_name_is_non_empty() {
         let name = platform_asset_name();
-        assert!(!name.is_empty());
+        assert_ne!(name, "");
         assert!(name.starts_with("accro-"));
     }
 

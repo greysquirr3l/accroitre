@@ -4,6 +4,7 @@
 //! authentication, connection reuse via multiplexed channels, known-hosts
 //! verification, configurable timeouts, and auth retry.
 
+use std::future::{Future, ready};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -85,10 +86,10 @@ struct ClientHandler {
 impl client::Handler for ClientHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(
+    fn check_server_key(
         &mut self,
         server_public_key: &PublicKey,
-    ) -> Result<bool, Self::Error> {
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
         // If we have a known_hosts file, verify the key against it.
         if let Some(ref kh_path) = self.known_hosts_path
             && kh_path.exists()
@@ -101,13 +102,13 @@ impl client::Handler for ClientHandler {
             // is deferred to when we have a richer CLI interaction model.
             // TODO(T16): Implement interactive known_hosts prompting in CLI wiring.
             let _ = server_public_key;
-            return Ok(true);
+            return ready(Ok(true));
         }
 
         // Default: accept the key (first-use trust). The CLI layer (T16) will
         // add interactive prompting for unknown hosts.
         debug!("no known_hosts file configured — accepting server key on first use");
-        Ok(true)
+        ready(Ok(true))
     }
 }
 
