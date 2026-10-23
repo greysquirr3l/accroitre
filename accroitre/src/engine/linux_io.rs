@@ -492,7 +492,7 @@ mod tests {
 
         if try_copy_file_range(&src, &dst)? {
             let copied = fs::read(&dst)?;
-            assert!(copied.is_empty());
+            assert_eq!(copied, b"");
         }
         Ok(())
     }
