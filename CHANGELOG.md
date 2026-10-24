@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-24
+
 ### Added
 
 - **Remote transfers over SSH** — `accro copy user@host:/path` and `accro copy /local user@host:/path` now work end to end, with no SFTP server required on the remote:
@@ -18,13 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `accro hash --json --algorithm <xxhash128|blake3>` — the helper the remote side runs for deduplication. Install `accroitre-cli` on the remote host to get it.
 - **`accroitre-cli` gained a library target** — the crate now exposes `accroitre_cli::remote_pipeline` and friends as a library alongside the `accro` binary, which lets the copy pipelines be driven — and tested — from outside the binary.
 
-### Fixed
-
-- **Remote deduplication found no duplicates** — the `xxhsum` and `sha256sum` fallbacks key their hash map by the relative name the tool was given, while the caller looks the hashes up by the full path of the entry. Every lookup missed, so no file was ever recognised as a duplicate. The parsed names are now resolved back to the full entry paths.
-- **A broken remote hash tool failed the whole transfer** — `accro hash` on a remote that runs an older `accro` without the `hash` subcommand returned a non-zero exit status that was propagated as a fatal error. The hashing methods are now tried in order of preference, a method that hashes fewer files than requested is passed over, and streaming the content for local hashing remains the guaranteed last resort.
-
-## [0.3.0] - 2026-10-23
-
 ### Changed
 
 - **MSRV raised to Rust 1.99.1** — this is a breaking change for downstream consumers, since `rust-version` is part of the published package metadata. The workspace `rust-version`, `clippy.toml` MSRV, `rust-toolchain.toml` pin, and every CI toolchain pin move from 1.96.0 to 1.99.1 (current stable).
@@ -32,11 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote deduplication found no duplicates** — the `xxhsum` and `sha256sum` fallbacks key their hash map by the relative name the tool was given, while the caller looks the hashes up by the full path of the entry. Every lookup missed, so no file was ever recognised as a duplicate. The parsed names are now resolved back to the full entry paths.
+- **A broken remote hash tool failed the whole transfer** — `accro hash` on a remote that runs an older `accro` without the `hash` subcommand returned a non-zero exit status that was propagated as a fatal error. The hashing methods are now tried in order of preference, a method that hashes fewer files than requested is passed over, and streaming the content for local hashing remains the guaranteed last resort.
+
 - **Clippy lints that only appear on Rust 1.99+** — the new toolchain enables `clippy::assert_is_empty` and `clippy::unused_async_trait_impl`, which the CI lint profile treats as errors:
   - `ssh`: the `check_server_key` handler now returns `impl Future` directly instead of an `async fn` with no `.await` in it.
   - `remote_dedup`, `delta`, `macos_io`, `main`, `update`: empty-collection assertions changed from `assert!(x.is_empty())` to `assert_eq!`/`assert_ne!` so a failure prints the offending value.
 - **CI audit step no longer drifts from `deny.toml`** — the two advisory-ignore lists are now identical, and the five stale entries whose advisories are no longer reachable were removed. Only `RUSTSEC-2023-0071` (`rsa`, via `russh` → `ssh-key`, no fixed pre-release published) and `RUSTSEC-2025-0119` (`number_prefix`, via `indicatif`) remain ignored.
 - **`main` CI was failing on the dependency audit** — the `Audit dependencies` step errored on every push to `main` because the advisory set had grown past the inline ignore list. The `Cargo.lock` update below is what actually fixes it; adding more ignore entries would only have hidden the finding.
+
 
 ### Security
 
