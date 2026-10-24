@@ -1,8 +1,12 @@
+#![cfg(unix)]
 //! End-to-end tests for the SSH transport.
 //!
 //! A minimal SSH server runs in-process and executes commands through the
 //! local shell, so the tar streaming, listing and hashing paths are exercised
 //! against a real SSH transport.
+//!
+//! The remote end of an SSH transfer is driven through a POSIX shell, so the
+//! test server needs one too.  These tests therefore only run on Unix.
 
 use std::path::Path;
 
@@ -234,7 +238,6 @@ async fn commands_can_read_their_stdin() -> Result<(), Box<dyn std::error::Error
 }
 
 /// Write a stand-in for `accro` that answers `accro hash --json` requests.
-#[cfg(unix)]
 fn write_fake_accro(directory: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -254,7 +257,6 @@ done
     Ok(())
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn native_remote_hashing_uses_the_accro_hash_command()
 -> Result<(), Box<dyn std::error::Error>> {

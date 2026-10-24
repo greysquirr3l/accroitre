@@ -1,8 +1,12 @@
+#![cfg(unix)]
 //! End-to-end tests for the remote copy pipelines.
 //!
 //! The pipelines run against an in-process SSH server, so the whole path —
 //! scanning, deduplication, tar streaming and hard-linking — is exercised
 //! against a real SSH transport.
+//!
+//! The remote end of an SSH transfer is driven through a POSIX shell, so the
+//! test server needs one too.  These tests therefore only run on Unix.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -71,7 +75,6 @@ fn remote_options(server: &TestServer) -> RemoteOptions {
 }
 
 /// Check that two files share the same inode.
-#[cfg(unix)]
 fn assert_same_inode(first: &std::path::Path, second: &std::path::Path) -> TestResult {
     use std::os::unix::fs::MetadataExt;
 
@@ -82,12 +85,6 @@ fn assert_same_inode(first: &std::path::Path, second: &std::path::Path) -> TestR
         second_meta.ino(),
         "duplicates must share an inode"
     );
-    Ok(())
-}
-
-/// Check that two files share the same inode.
-#[cfg(not(unix))]
-fn assert_same_inode(_first: &std::path::Path, _second: &std::path::Path) -> TestResult {
     Ok(())
 }
 

@@ -1,8 +1,14 @@
+#![cfg(unix)]
 //! End-to-end tests that drive the `accro` binary itself.
 //!
 //! The binary is run against an in-process SSH server, so the command line
 //! surface — argument parsing, the remote dispatch and the summary — is
 //! covered together.
+//!
+//! The remote end of an SSH transfer is driven through a POSIX shell, so the
+//! test server needs one too.  These tests therefore only run on Unix.
+
+use std::os::unix::fs::MetadataExt;
 
 use tokio::process::Command;
 
@@ -145,15 +151,7 @@ async fn hard_links_duplicate_content_on_the_remote_host() -> TestResult {
 
     let a_meta = std::fs::metadata(remote.join("a.txt"))?;
     let b_meta = std::fs::metadata(remote.join("b.txt"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        assert_eq!(a_meta.ino(), b_meta.ino(), "duplicates must share an inode");
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (a_meta, b_meta);
-    }
+    assert_eq!(a_meta.ino(), b_meta.ino(), "duplicates must share an inode");
     Ok(())
 }
 

@@ -1,8 +1,9 @@
 //! `accro hash` — hash files so a remote host can deduplicate against them.
 //!
-//! The `--json` output is the contract with [`remote_dedup`]: one JSON object
-//! per line carrying the path exactly as it was given on the command line and
-//! the hex-encoded hash of the file's contents.
+//! The `--json` output is the contract with
+//! [`remote_dedup`](accroitre::adapters::remote_dedup): one JSON object per
+//! line carrying the path exactly as it was given on the command line and the
+//! hex-encoded hash of the file's contents.
 
 use std::path::{Path, PathBuf};
 
